@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tensors — Interactive Explorer (Day 11)</title>
+<style>
+:root { --bg:#0f172a; --panel:#1e293b; --line:#38bdf8; --txt:#f1f5f9; --sub:#94a3b8; }
+body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--txt); padding:16px; max-width:900px; margin-left:auto; margin-right:auto; }
+header h1 { margin:0 0 4px 0; font-size:26px; }
+header p { color:var(--sub); margin:0 0 16px 0; }
+.tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+.tabs button { background:var(--panel); color:var(--txt); border:1px solid #334155; border-radius:10px; padding:10px 16px; cursor:pointer; font-size:15px; }
+.tabs button.active { border-color:var(--line); background:#0c4a6e; font-weight:bold; }
+.card { background:var(--panel); border:1px solid #334155; border-radius:12px; padding:16px; margin-bottom:12px; }
+.card h2 { color:var(--line); margin:0 0 12px 0; font-size:18px; }
+.readout { display:flex; flex-wrap:wrap; gap:16px; margin:12px 0; }
+.readout .stat { background:#0f172a; border:1px solid #334155; border-radius:8px; padding:8px 14px; }
+.readout .stat .k { color:var(--sub); font-size:12px; text-transform:uppercase; }
+.readout .stat .v { color:var(--line); font-size:18px; font-weight:bold; font-family:ui-monospace,monospace; }
+.slider-row { margin:10px 0; }
+.slider-row label { display:block; margin-bottom:4px; font-size:14px; }
+.slider-row label b { color:var(--line); font-family:ui-monospace,monospace; }
+input[type=range] { accent-color:#38bdf8; width:100%; }
+.note { color:var(--sub); font-size:13px; font-style:italic; }
+canvas#viz { width:100%; height:280px; background:#0f172a; border:1px solid #334155; border-radius:10px; display:block; margin-top:12px; }
+.exrow { background:#0f172a; border:1px solid #334155; border-radius:8px; padding:10px 12px; margin:8px 0; cursor:pointer; font-size:14px; }
+.exrow:hover { border-color:var(--line); }
+.exrow .rk { display:inline-block; min-width:44px; color:var(--line); font-weight:bold; font-family:ui-monospace,monospace; }
+.exrow .sh { color:var(--sub); font-family:ui-monospace,monospace; }
+.q { margin-bottom:18px; }
+.q p { margin:0 0 8px 0; font-weight:bold; }
+.q .opts button { display:block; width:100%; text-align:left; background:#0f172a; color:var(--txt); border:1px solid #334155; border-radius:8px; padding:10px 12px; margin:6px 0; cursor:pointer; font-size:14px; }
+.q .opts button:hover { border-color:var(--line); }
+.q .opts button.correct { border-color:#4ade80; background:#052e16; }
+.q .opts button.wrong { border-color:#f43f5e; background:#3f1d1d; }
+.q .opts button:disabled { cursor:default; }
+#score { font-size:16px; font-weight:bold; color:var(--line); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔢 Tensors — Interactive Explorer</h1>
+  <p>Day 11 · understand rank, shape and size — the building blocks of every ML model.</p>
+</header>
+
+<div class="card">
+  <h2>1 · Pick a rank &amp; resize dimensions</h2>
+  <div class="tabs" id="rankTabs"></div>
+  <div id="sliders"></div>
+  <div class="readout">
+    <div class="stat"><div class="k">Rank / ndim</div><div class="v" id="rRank">2</div></div>
+    <div class="stat"><div class="k">Shape</div><div class="v" id="rShape">(4, 3)</div></div>
+    <div class="stat"><div class="k">Size (elements)</div><div class="v" id="rSize">12</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>2 · Live visual</h2>
+  <canvas id="viz" width="640" height="280"></canvas>
+  <p class="note">Schematic only — at most 4 boxes are drawn per dimension; "…" means more elements exist.</p>
+</div>
+
+<div class="card">
+  <h2>3 · Real ML examples — click a row to see its rank</h2>
+  <div id="examples"></div>
+</div>
+
+<div class="card">
+  <h2>4 · Quiz</h2>
+  <div class="q" data-answer="1">
+    <p>Q1. A (4, 3) tensor has rank?</p>
+    <div class="opts">
+      <button>1</button><button>2</button><button>3</button><button>12</button>
+    </div>
+  </div>
+  <div class="q" data-answer="2">
+    <p>Q2. A tensor with shape (2, 3, 4) contains how many elements (size)?</p>
+    <div class="opts">
+      <button>9</button><button>12</button><button>24</button><button>27</button>
+    </div>
+  </div>
+  <div class="q" data-answer="2">
+    <p>Q3. An image batch shaped (32, 28, 28, 1) is what rank?</p>
+    <div class="opts">
+      <button>2</button><button>3</button><button>4</button><button>5</button>
+    </div>
+  </div>
+  <p id="score">Score: 0 / 3</p>
+</div>
+
+<script>
+var rank = 2;
+var dims = [5, 4, 3, 2, 2]; // adjustable size of dimension i (index 0..4), range 1..8
+var CAP = 4;
+
+var rankNames = ["0D Scalar", "1D Vector", "2D Matrix", "3D", "4D", "5D"];
+
+// ---------- rank tabs ----------
+var tabsEl = document.getElementById("rankTabs");
+for (var r = 0; r <= 5; r++) {
+  (function (rr) {
+    var b = document.createElement("button");
+    b.textContent = rankNames[rr];
+    b.onclick = function () { setRank(rr); };
+    b.id = "tab" + rr;
+    tabsEl.appendChild(b);
+  })(r);
+}
+
+function setRank(r) {
+  rank = r;
+  refresh();
+}
+
+function setDimsFromExample(r) {
+  // keep current slider values, just switch rank
+  setRank(r);
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+// ---------- sliders ----------
+function buildSliders() {
+  var box = document.getElementById("sliders");
+  box.innerHTML = "";
+  if (rank === 0) {
+    box.innerHTML = '<p class="note">A scalar has no dimensions — there is nothing to resize.</p>';
+    return;
+  }
+  var shown = Math.min(rank, CAP);
+  for (var i = 0; i < shown; i++) {
+    (function (d) {
+      var row = document.createElement("div");
+      row.className = "slider-row";
+      var lab = document.createElement("label");
+      lab.innerHTML = 'Dimension ' + d + ' size: <b>' + dims[d] + '</b>';
+      var sl = document.createElement("input");
+      sl.type = "range"; sl.min = 1; sl.max = 8; sl.value = dims[d];
+      sl.oninput = function () {
+        dims[d] = parseInt(sl.value, 10);
+        lab.innerHTML = 'Dimension ' + d + ' size: <b>' + dims[d] + '</b>';
+        refresh(false);
+      };
+      row.appendChild(lab); row.appendChild(sl);
+      box.appendChild(row);
+    })(i);
+  }
+  if (rank === 5) {
+    var n = document.createElement("p");
+    n.className = "note";
+    n.textContent = "Showing 4 of 5 sliders — dimension 4 is fixed at " + dims[4] + ".";
+    box.appendChild(n);
+  }
+}
+
+// ---------- readout ----------
+function refresh(rebuild) {
+  if (rebuild === undefined || rebuild) buildSliders();
+  for (var r = 0; r <= 5; r++) {
+    document.getElementById("tab" + r).className = (r === rank) ? "active" : "";
+  }
+  var shape = dims.slice(0, rank);
+  var size = rank === 0 ? 1 : shape.reduce(function (a, b) { return a * b; }, 1);
+  document.getElementById("rRank").textContent = rank;
+  document.getElementById("rShape").textContent = rank === 0 ? "()" : "(" + shape.join(", ") + ")";
+  document.getElementById("rSize").textContent = size;
+  draw();
+}
+
+// ---------- canvas drawing ----------
+var cv = document.getElementById("viz");
+var ctx = cv.getContext("2d");
+
+function box(x, y, w, h, alpha) {
+  ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+  ctx.fillStyle = "#0c4a6e";
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = "#38bdf8";
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x, y, w, h);
+  ctx.globalAlpha = 1;
+}
+
+function truncLabel(n) {
+  if (n <= CAP) return null;
+  return "…"; // more elements exist
+}
+
+function draw() {
+  var W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = "20px system-ui";
+
+  var d = function (i) { return Math.min(dims[i], CAP); };
+  var ell = function (n) { return n > CAP ? "…" : ""; };
+
+  if (rank === 0) {
+    // glowing scalar
+    var s = 64, x = W / 2 - s / 2, y = H / 2 - s / 2;
+    var g = ctx.createRadialGradient(W/2, H/2, 8, W/2, H/2, 90);
+    g.addColorStop(0, "rgba(56,189,248,0.55)");
+    g.addColorStop(1, "rgba(56,189,248,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(x - 60, y - 60, s + 120, s + 120);
+    box(x, y, s, s);
+    ctx.fillStyle = "#94a3b8"; ctx.font = "14px system-ui"; ctx.textAlign = "center";
+    ctx.fillText("a single value", W / 2, y + s + 26);
+    ctx.textAlign = "left";
+  } else if (rank === 1) {
+    var n = d(0), bw = 56, gap = 10;
+    var tw = n * bw + (n - 1) * gap;
+    var sx = W / 2 - tw / 2, sy = H / 2 - 28;
+    for (var i = 0; i < n; i++) box(sx + i * (bw + gap), sy, bw, 56);
+    ctx.fillStyle = "#94a3b8"; ctx.font = "20px system-ui";
+    ctx.fillText(ell(dims[0]), sx + tw + 8, sy + 38);
+    ctx.font = "14px system-ui"; ctx.fillText("length " + dims[0], sx, sy + 84);
+  } else if (rank === 2) {
+    var nr = d(0), nc = d(1), cell = 44, gap2 = 8;
+    var tw2 = nc * cell + (nc - 1) * gap2, th = nr * cell + (nr - 1) * gap2;
+    var x0 = W / 2 - tw2 / 2, y0 = H / 2 - th / 2;
+    for (var i2 = 0; i2 < nr; i2++)
+      for (var j2 = 0; j2 < nc; j2++)
+        box(x0 + j2 * (cell + gap2), y0 + i2 * (cell + gap2), cell, cell);
+    ctx.fillStyle = "#94a3b8"; ctx.font = "20px system-ui";
+    ctx.fillText(ell(dims[0]), x0 + tw2 + 8, y0 + th / 2 + 8);
+    ctx.fillText(ell(dims[1]), x0 + tw2 / 2 - 6, y0 + th + 28);
+    ctx.font = "14px system-ui";
+    ctx.fillText("rows: " + dims[0] + "   cols: " + dims[1], 16, H - 16);
+  } else if (rank === 3) {
+    var L = d(2), R = d(0), C = d(1), c3 = 30, g3 = 6, off = 14;
+    var lw = C * c3 + (C - 1) * g3, lh = R * c3 + (R - 1) * g3;
+    var bx = W / 2 - (lw + (L - 1) * off) / 2, by = H / 2 - (lh + (L - 1) * off) / 2 + 10;
+    for (var l = L - 1; l >= 0; l--) {
+      var ox = bx + l * off, oy = by + (L - 1 - l) * off;
+      for (var i3 = 0; i3 < R; i3++)
+        for (var j3 = 0; j3 < C; j3++)
+          box(ox + j3 * (c3 + g3), oy + i3 * (c3 + g3), c3, c3, l === L - 1 ? 1 : 0.35);
+    }
+    ctx.fillStyle = "#94a3b8"; ctx.font = "14px system-ui";
+    ctx.fillText("depth " + dims[2] + " " + ell(dims[2]) + "   ·   (" + dims[0] + ", " + dims[1] + ", " + dims[2] + ")", 16, H - 16);
+  } else if (rank === 4) {
+    var B = Math.min(dims[0], 3), cubeS = 74, cg = 26;
+    var trow = B * cubeS + (B - 1) * cg;
+    var cx = W / 2 - trow / 2, cy = H / 2 - cubeS / 2;
+    ctx.font = "14px system-ui"; ctx.fillStyle = "#38bdf8";
+    ctx.fillText("batch", cx, cy - 12);
+    for (var b = 0; b < B; b++) {
+      var qx = cx + b * (cubeS + cg), qy = cy;
+      // cube outline: front square + back offset square + connectors
+      var o = 16;
+      ctx.strokeStyle = "#38bdf8"; ctx.lineWidth = 1.5;
+      ctx.strokeRect(qx, qy, cubeS - o, cubeS - o);
+      ctx.strokeRect(qx + o, qy - o, cubeS - o, cubeS - o);
+      ctx.beginPath();
+      ctx.moveTo(qx, qy); ctx.lineTo(qx + o, qy - o);
+      ctx.moveTo(qx + cubeS - o, qy); ctx.lineTo(qx + cubeS, qy - o);
+      ctx.moveTo(qx, qy + cubeS - o); ctx.lineTo(qx + o, qy + cubeS);
+      ctx.moveTo(qx + cubeS - o, qy + cubeS - o); ctx.lineTo(qx + cubeS, qy + cubeS);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#94a3b8"; ctx.font = "20px system-ui";
+    ctx.fillText(ell(dims[0]), cx + trow + 8, cy + cubeS / 2);
+    ctx.font = "14px system-ui";
+    ctx.fillText("batch of " + dims[0] + " images  ·  (" + dims[0] + ", " + dims[1] + ", " + dims[2] + ", " + dims[3] + ")", 16, H - 16);
+  } else if (rank === 5) {
+    var V = Math.min(dims[0], 2), F = Math.min(dims[1], 3);
+    var cs = 52, cgap = 20, rsep = 46;
+    var rrow = F * cs + (F - 1) * cgap;
+    var sx5 = W / 2 - rrow / 2, sy5 = H / 2 - (2 * cs + rsep) / 2 + 8;
+    for (var v = 0; v < V; v++) {
+      ctx.fillStyle = "#38bdf8"; ctx.font = "13px system-ui";
+      ctx.fillText("video " + (v + 1), sx5 - 64, sy5 + v * (cs + rsep) + cs / 2);
+      for (var f = 0; f < F; f++) {
+        var fx = sx5 + f * (cs + cgap), fy = sy5 + v * (cs + rsep);
+        var oo = 11;
+        ctx.strokeStyle = "#38bdf8"; ctx.lineWidth = 1.5;
+        ctx.strokeRect(fx, fy, cs - oo, cs - oo);
+        ctx.strokeRect(fx + oo, fy - oo, cs - oo, cs - oo);
+        ctx.beginPath();
+        ctx.moveTo(fx, fy); ctx.lineTo(fx + oo, fy - oo);
+        ctx.moveTo(fx + cs - oo, fy); ctx.lineTo(fx + cs, fy - oo);
+        ctx.stroke();
+      }
+    }
+    ctx.fillStyle = "#94a3b8"; ctx.font = "20px system-ui";
+    ctx.fillText(ell(dims[1]), sx5 + rrow + 6, sy5 + cs / 2);
+    ctx.font = "14px system-ui";
+    ctx.fillText("videos: " + dims[0] + "  frames: " + dims[1] + "  ·  (" + dims[0] + ", " + dims[1] + ", " + dims[2] + ", " + dims[3] + ", " + dims[4] + ")", 16, H - 16);
+  }
+}
+
+// ---------- real ML examples ----------
+var examples = [
+  { rank: 0, name: "0D Scalar", desc: "a single number — e.g. a predicted house price of 45.2 (lakh)" },
+  { rank: 1, name: "1D Vector", desc: "one student's features — e.g. [CGPA 8.7, IQ 110]" },
+  { rank: 2, name: "2D Matrix", desc: "a dataset — rows = students, columns = features" },
+  { rank: 3, name: "3D Tensor", desc: "an NLP batch — (sentences × words × one-hot embedding dims)" },
+  { rank: 4, name: "4D Tensor", desc: "an image batch — (batch × height × width × channels)" },
+  { rank: 5, name: "5D Tensor", desc: "a video batch — (videos × frames × height × width × channels)" }
+];
+var exEl = document.getElementById("examples");
+examples.forEach(function (e) {
+  var row = document.createElement("div");
+  row.className = "exrow";
+  row.innerHTML = '<span class="rk">' + e.name + '</span> <span class="sh">rank ' + e.rank + '</span> — ' + e.desc;
+  row.onclick = function () { setDimsFromExample(e.rank); };
+  exEl.appendChild(row);
+});
+
+// ---------- quiz ----------
+var correctCount = 0, answeredCount = 0, totalQ = 3;
+var scoreEl = document.getElementById("score");
+document.querySelectorAll(".q").forEach(function (q) {
+  var answer = parseInt(q.getAttribute("data-answer"), 10);
+  var btns = q.querySelectorAll(".opts button");
+  btns.forEach(function (btn, idx) {
+    btn.onclick = function () {
+      if (q.getAttribute("data-done")) return;
+      q.setAttribute("data-done", "1");
+      answeredCount++;
+      if (idx === answer) {
+        btn.classList.add("correct");
+        correctCount++;
+      } else {
+        btn.classList.add("wrong");
+        btns[answer].classList.add("correct");
+      }
+      btns.forEach(function (b) { b.disabled = true; });
+      scoreEl.textContent = "Score: " + correctCount + " / " + totalQ;
+    };
+  });
+});
+
+refresh();
+</script>
+</body>
+</html>

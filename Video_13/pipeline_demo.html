@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>End-to-End ML Project — Interactive Pipeline</title>
+<style>
+:root { --bg:#0f172a; --panel:#1e293b; --line:#38bdf8; --txt:#f1f5f9; --sub:#94a3b8; }
+body { margin:0; font-family:system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--txt); padding:16px; max-width:900px; margin-left:auto; margin-right:auto; }
+h1 { font-size:1.5rem; margin-bottom:4px; }
+.subtitle { color:var(--sub); margin-bottom:16px; }
+.steps { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+.steps button { background:var(--panel); color:var(--txt); border:2px solid transparent; border-radius:10px; padding:10px 12px; cursor:pointer; font-size:0.9rem; }
+.steps button.active { border-color:var(--line); background:#0c4a6e; font-weight:bold; }
+.card { background:var(--panel); border:1px solid #334155; border-radius:12px; padding:16px; margin-bottom:12px; }
+.card h2 { color:var(--line); margin-top:0; }
+.card p { color:var(--txt); line-height:1.5; }
+pre code { display:block; background:#0b1220; border-radius:8px; padding:12px; font-family:ui-monospace,Menlo,monospace; overflow-x:auto; font-size:0.9rem; color:#a5f3fc; }
+.demo { margin-top:12px; }
+.demo label { display:block; color:var(--sub); font-size:0.85rem; margin:10px 0 4px; }
+.demo input[type=range] { width:100%; accent-color:#38bdf8; }
+canvas { display:block; width:100%; max-width:520px; height:320px; background:#0b1220; border-radius:8px; margin-top:8px; }
+.acc { font-size:1.05rem; margin-top:8px; }
+.acc b { color:var(--line); }
+.legend { color:var(--sub); font-size:0.85rem; margin-top:4px; }
+.legend .b { color:#38bdf8; } .legend .r { color:#f43f5e; }
+.q { margin:12px 0; }
+.q p { font-weight:bold; }
+.q button { display:block; width:100%; text-align:left; background:var(--panel); color:var(--txt); border:2px solid #334155; border-radius:10px; padding:10px; margin:6px 0; cursor:pointer; }
+.q button.correct { border-color:#4ade80; background:#052e16; }
+.q button.wrong { border-color:#f43f5e; background:#3f1d1d; }
+.q button:disabled { cursor:default; opacity:0.9; }
+.score { font-weight:bold; color:var(--line); margin-top:12px; }
+.hint { color:var(--sub); font-size:0.85rem; }
+</style>
+</head>
+<body>
+
+<h1>🏭 End-to-End ML Project — Interactive Pipeline</h1>
+<p class="subtitle">Day 13 · click through the 7 steps of a real (toy) placement-prediction project: CGPA + IQ → placed or not.</p>
+
+<div class="steps" id="stepper">
+  <button data-step="0" class="active">1 · Preprocess</button>
+  <button data-step="1">2 · EDA</button>
+  <button data-step="2">3 · Feature selection</button>
+  <button data-step="3">4 · Extract X/y</button>
+  <button data-step="4">5 · Scaling</button>
+  <button data-step="5">6 · Train &amp; test</button>
+  <button data-step="6">7 · Evaluate &amp; export</button>
+</div>
+
+<div id="detail"></div>
+
+<div class="card">
+  <h2>📝 Quiz — check your understanding</h2>
+
+  <div class="q" id="q1">
+    <p>1. Which step converts features to zero mean / unit variance?</p>
+    <button data-ok="0">Preprocessing (step 1)</button>
+    <button data-ok="1">Scaling (step 5)</button>
+    <button data-ok="0">Feature selection (step 3)</button>
+    <button data-ok="0">Evaluation (step 7)</button>
+  </div>
+
+  <div class="q" id="q2">
+    <p>2. Accuracy of 0.85 on the test set means…</p>
+    <button data-ok="0">The model is 85% sure about each prediction</button>
+    <button data-ok="1">85% of test predictions were correct</button>
+    <button data-ok="0">85% of the training data was used</button>
+    <button data-ok="0">The error rate is 85%</button>
+  </div>
+
+  <div class="score" id="score">Score: 0 / 2</div>
+</div>
+
+<script>
+// ---- Seeded PRNG (mulberry32) so the demo data is identical on every load ----
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};}
+var rng = mulberry32(13);
+
+// ---- Synthetic toy dataset: 60 points, CGPA in [5,10], IQ in [85,135] ----
+// TRUE decision boundary (fixed, used only to label the data):
+//   placed = 1 if IQ > 8*CGPA + 35, else 0   (with ~10% label noise)
+var DATA = [];
+for (var i = 0; i < 60; i++) {
+  var cgpa = 5 + rng() * 5;        // 5..10
+  var iq = 85 + rng() * 50;        // 85..135
+  var label = (iq > 8 * cgpa + 35) ? 1 : 0;
+  if (rng() < 0.10) label = 1 - label;  // small noise, like messy real data
+  DATA.push({ cgpa: cgpa, iq: iq, label: label });
+}
+
+// ---- Reusable scatter + decision-line renderer ----
+function drawDemo(canvasId, angleDeg, offset) {
+  var canvas = document.getElementById(canvasId);
+  var ctx = canvas.getContext('2d');
+  var W = canvas.width = canvas.clientWidth || 520;
+  var H = canvas.height = 320;
+  var xMin = 5, xMax = 10, yMin = 85, yMax = 135;
+  function px(c) { return (c - xMin) / (xMax - xMin) * W; }
+  function py(q) { return H - (q - yMin) / (yMax - yMin) * H; }
+
+  ctx.clearRect(0, 0, W, H);
+
+  // grid lines + axis labels
+  ctx.strokeStyle = '#1e293b'; ctx.fillStyle = '#94a3b8'; ctx.font = '11px system-ui';
+  for (var g = 6; g <= 10; g += 1) { ctx.beginPath(); ctx.moveTo(px(g), 0); ctx.lineTo(px(g), H); ctx.stroke(); ctx.fillText(g.toFixed(0), px(g) - 3, H - 4); }
+  for (var q2 = 90; q2 <= 130; q2 += 10) { ctx.beginPath(); ctx.moveTo(0, py(q2)); ctx.lineTo(W, py(q2)); ctx.stroke(); ctx.fillText(q2, 4, py(q2) - 3); }
+
+  // user decision line: normal n = (-sin t, cos t), offset moves it along n
+  var t = angleDeg * Math.PI / 180;
+  var nx = -Math.sin(t), ny = Math.cos(t);
+  var cx = 7.5, cy = 110;                       // anchor centre of the data cloud
+  var thr = nx * cx + ny * cy + offset * 5;     // slider offset in [-5,5]
+
+  // draw the line (direction d = (cos t, sin t), big span, canvas clips it)
+  var dx = Math.cos(t), dy = Math.sin(t), span = 12;
+  var p0x = cx + nx * offset * 5, p0y = cy + ny * offset * 5;
+  ctx.strokeStyle = '#facc15'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(px(p0x - dx * span), py(p0y - dy * span));
+  ctx.lineTo(px(p0x + dx * span), py(p0y + dy * span));
+  ctx.stroke();
+
+  // points + live accuracy vs the fixed true labels
+  var correctN = 0;
+  for (var k = 0; k < DATA.length; k++) {
+    var d = DATA[k];
+    var pred = (nx * d.cgpa + ny * d.iq > thr) ? 1 : 0;
+    if (pred === d.label) correctN++;
+    ctx.fillStyle = d.label === 1 ? '#38bdf8' : '#f43f5e';
+    ctx.beginPath(); ctx.arc(px(d.cgpa), py(d.iq), 5, 0, Math.PI * 2); ctx.fill();
+  }
+  return correctN / DATA.length;
+}
+
+function wireDemo(prefix) {
+  var angle = document.getElementById(prefix + '-angle');
+  var offset = document.getElementById(prefix + '-offset');
+  var acc = document.getElementById(prefix + '-acc');
+  function refresh() {
+    var a = parseFloat(angle.value), o = parseFloat(offset.value);
+    var accuracy = drawDemo(prefix + '-canvas', a, o);
+    acc.innerHTML = 'Accuracy: <b>' + accuracy.toFixed(2) + '</b> (' + Math.round(accuracy * DATA.length) + ' / ' + DATA.length + ' correct)';
+  }
+  angle.addEventListener('input', refresh);
+  offset.addEventListener('input', refresh);
+  // redraw once layout settles so canvas width is right
+  setTimeout(refresh, 0);
+  window.addEventListener('resize', refresh);
+}
+
+function demoHTML(prefix, blurb) {
+  return '<div class="demo"><p class="hint">' + blurb + '</p>' +
+    '<label>Line angle: <span>' + '°' + '</span></label>' +
+    '<input type="range" id="' + prefix + '-angle" min="0" max="90" value="55">' +
+    '<label>Offset / intercept (slider units −5…5)</label>' +
+    '<input type="range" id="' + prefix + '-offset" min="-5" max="5" step="0.1" value="0">' +
+    '<canvas id="' + prefix + '-canvas"></canvas>' +
+    '<div class="acc" id="' + prefix + '-acc"></div>' +
+    '<div class="legend"><span class="b">●</span> placed &nbsp; <span class="r">●</span> not placed &nbsp; <span style="color:#facc15">—</span> your decision line</div></div>';
+}
+
+// ---- The 7 pipeline steps ----
+var STEPS = [
+  {
+    title: '1 · Preprocess',
+    text: 'Raw data is never clean. The first job is to handle missing values, duplicates and wrong dtypes before anything else. Skipping this means every later step learns from garbage.',
+    code: 'df.dropna(inplace=True)',
+    demo: null
+  },
+  {
+    title: '2 · EDA (Exploratory Data Analysis)',
+    text: 'Plot the data before modelling it. The scatter below shows 60 students by CGPA and IQ — blue = placed, rose = not placed. You can already see the two groups separate, which tells you a simple model might work.',
+    code: 'df.describe()',
+    demo: { prefix: 'eda', blurb: 'Drag the sliders to draw your own decision line and watch the accuracy change — this is what EDA feels like: finding the pattern by eye before any model.' }
+  },
+  {
+    title: '3 · Feature selection',
+    text: 'Pick only the columns that help predict the target. Here CGPA and IQ carry the signal, so we drop the noise columns (name, roll number, …). Fewer, better features beat many weak ones.',
+    code: "X = df[['cgpa','iq']]",
+    demo: null
+  },
+  {
+    title: '4 · Extract X and y',
+    text: 'Split the dataframe into the input matrix X (features) and the target vector y (labels). X is what the model sees; y is what it must learn to predict.',
+    code: "y = df['placed']",
+    demo: null
+  },
+  {
+    title: '5 · Scaling',
+    text: 'CGPA (5–10) and IQ (85–135) live on very different scales, so the bigger numbers would dominate. StandardScaler converts every feature to zero mean and unit variance, giving each a fair vote.',
+    code: 'scaler = StandardScaler()',
+    demo: null
+  },
+  {
+    title: '6 · Train & test',
+    text: 'Hold out part of the data so you can honestly measure the model. train_test_split shuffles the rows and reserves a test set the model never sees during training.',
+    code: 'X_train, X_test, y_train, y_test = train_test_split(X, y)',
+    demo: null
+  },
+  {
+    title: '7 · Evaluate & export',
+    text: 'Score the trained model on the held-out test set — accuracy is the fraction of correct predictions. Try beating it with your own line in the demo below, then save the winner with joblib so it can be reused without retraining.',
+    code: "joblib.dump(model, 'placement_model.pkl')",
+    demo: { prefix: 'eval', blurb: 'Now YOU are the model. Set the line angle and offset, then read the accuracy — exactly how we judge a trained classifier.' }
+  }
+];
+
+function renderStep(i) {
+  var s = STEPS[i];
+  var html = '<div class="card"><h2>' + s.title + '</h2><p>' + s.text + '</p><pre><code>' + s.code + '</code></pre>';
+  if (s.demo) html += demoHTML(s.demo.prefix, s.demo.blurb);
+  html += '</div>';
+  document.getElementById('detail').innerHTML = html;
+  var btns = document.querySelectorAll('#stepper button');
+  for (var j = 0; j < btns.length; j++) btns[j].classList.toggle('active', j === i);
+  if (s.demo) wireDemo(s.demo.prefix);
+}
+
+document.querySelectorAll('#stepper button').forEach(function (b) {
+  b.addEventListener('click', function () { renderStep(parseInt(b.dataset.step, 10)); });
+});
+renderStep(0);
+
+// ---- Quiz ----
+var quizScore = 0, quizAnswered = 0;
+document.querySelectorAll('.q').forEach(function (q) {
+  var btns = q.querySelectorAll('button');
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      if (q.dataset.done) return;
+      q.dataset.done = '1';
+      quizAnswered++;
+      var right = b.dataset.ok === '1';
+      if (right) { b.classList.add('correct'); quizScore++; }
+      else {
+        b.classList.add('wrong');
+        btns.forEach(function (x) { if (x.dataset.ok === '1') x.classList.add('correct'); });
+      }
+      btns.forEach(function (x) { x.disabled = true; });
+      document.getElementById('score').textContent = 'Score: ' + quizScore + ' / 2';
+    });
+  });
+});
+</script>
+</body>
+</html>

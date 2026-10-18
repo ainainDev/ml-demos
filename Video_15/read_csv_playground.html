@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pd.read_csv — Parameter Playground (Day 15)</title>
+<style>
+:root{--bg:#0f172a;--panel:#1e293b;--line:#38bdf8;--txt:#f1f5f9;--sub:#94a3b8;}
+*{box-sizing:border-box;}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--txt);padding:16px;}
+.wrap{max-width:920px;margin:0 auto;}
+header h1{margin:8px 0 4px;font-size:1.6rem;}
+header .sub{color:var(--sub);margin:0 0 16px;}
+.card{background:var(--panel);border:1px solid #334155;border-radius:12px;padding:16px;margin-bottom:12px;}
+.card h2{color:var(--line);margin:0 0 12px;font-size:1.15rem;}
+.card p{line-height:1.55;}
+.sub,.muted{color:var(--sub);}
+pre{background:#0b1220;border-radius:8px;padding:12px;font-family:ui-monospace,Menlo,Consolas,monospace;overflow-x:auto;font-size:.85rem;white-space:pre;}
+.btnrow{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0;}
+button.toggle{background:var(--panel);color:var(--txt);border:1px solid #334155;border-radius:10px;padding:8px 12px;cursor:pointer;font-size:.9rem;font-family:ui-monospace,Menlo,Consolas,monospace;}
+button.toggle.active{border-color:var(--line);background:#0c4a6e;}
+button.toggle:disabled{opacity:.35;cursor:not-allowed;}
+button#reset{background:#0b1220;}
+table{border-collapse:collapse;width:100%;margin-top:8px;font-size:.88rem;}
+th,td{padding:8px;border:1px solid #334155;text-align:left;}
+thead th,tbody th{background:#0c4a6e;}
+.q{margin-bottom:14px;padding:12px;border:1px solid #334155;border-radius:10px;background:#0b1220;}
+.q p{margin:0 0 8px;}
+.q .opts button{display:block;width:100%;text-align:left;margin:6px 0;background:var(--panel);color:var(--txt);border:1px solid #334155;border-radius:10px;padding:10px;cursor:pointer;font-size:.9rem;font-family:ui-monospace,Menlo,Consolas,monospace;}
+.q .opts button.correct{border-color:#4ade80;background:#052e16;}
+.q .opts button.wrong{border-color:#f43f5e;background:#3f1d1d;}
+.q .note{color:var(--sub);font-size:.85rem;margin:8px 0 0;}
+#score{font-weight:bold;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+<h1>📄 pd.read_csv — Parameter Playground</h1>
+<p class="sub">Day 15 · toggle real read_csv parameters and watch how the parsed table changes.</p>
+</header>
+
+<div class="card">
+<h2>1 · Pick a raw file</h2>
+<div class="btnrow" id="vtabs">
+<button class="toggle active" data-v="0">clean CSV</button>
+<button class="toggle" data-v="1">junk row</button>
+<button class="toggle" data-v="2">tab-separated, no header</button>
+</div>
+<pre id="raw"></pre>
+<p class="muted">This is the raw text the parser receives — exactly what read_csv would see on disk.</p>
+</div>
+
+<div class="card">
+<h2>2 · Toggle parameters</h2>
+<div class="btnrow" id="params">
+<button class="toggle" data-p="sep">sep='\t'</button>
+<button class="toggle" data-p="names">names=[...]</button>
+<button class="toggle" data-p="header">header=None</button>
+<button class="toggle" data-p="skiprows">skiprows=1</button>
+<button class="toggle" data-p="usecols">usecols=['title','year']</button>
+<button class="toggle" data-p="nrows">nrows=4</button>
+<button class="toggle" data-p="index">index_col='title'</button>
+<button class="toggle" id="reset">Reset</button>
+</div>
+<p class="muted">Parameters compose left → right: skiprows → separator → header/names → usecols → nrows → index_col.
+usecols and index_col need named columns (a header row or names). When names is on, it overrides the header row.</p>
+</div>
+
+<div class="card">
+<h2>3 · Parsed result</h2>
+<pre id="code"></pre>
+<div id="tbl"></div>
+<p class="muted" id="shape"></p>
+</div>
+
+<div class="card">
+<h2>Read a CSV straight from a URL</h2>
+<pre>import io
+import requests
+
+r = requests.get("https://example.com/movies.csv")
+df = pd.read_csv(io.StringIO(r.text))</pre>
+<p>requests.get downloads the file's text; io.StringIO wraps that string in a file-like object so read_csv can parse it without a real file on disk. This lets you load public datasets in two lines — no manual download step.</p>
+</div>
+
+<div class="card">
+<h2>Reading files that don't fit in memory</h2>
+<pre>chunks = pd.read_csv("big.csv", chunksize=10000)
+
+for chunk in chunks:
+    process(chunk)   # aggregate, filter, or save — then the chunk is freed</pre>
+<p>By default read_csv loads the entire file into RAM. With chunksize=10000 it instead returns an iterator that yields DataFrames of 10,000 rows at a time, so memory stays flat while you stream through millions of rows. Reach for it when a file is too big for memory, or when you only need per-batch aggregates like counts and means.</p>
+</div>
+
+<div class="card">
+<h2>Quick quiz — which parameter for which job?</h2>
+<div id="quiz"></div>
+<p id="score" class="sub">Score: 0 / 3</p>
+</div>
+
+</div>
+
+<script>
+const MOVIES = [
+ ["Orbit Fall","2021","Sci-Fi","8.2","15234"],
+ ["Silent Harvest","2019","Drama","7.9","8941"],
+ ["Paper Lanterns","2022","Romance","7.4","5210"],
+ ["The Copper Map","2018","Adventure","8.0","11087"],
+ ["Midnight Assembly","2023","Thriller","7.1","3302"],
+ ["Glass Bees","2020","Sci-Fi","6.8","4109"],
+ ["Winter Circuit","2022","Sport","8.5","21008"],
+ ["Hollow Vows","2017","Drama","7.6","7455"]
+];
+const NAMES = ["title","year","genre","rating","votes"];
+const JUNK = "## scraped from web 2024";
+const VARIANTS = [
+ {junk:false, tsv:false, sep:",",  header:"head"},
+ {junk:true,  tsv:false, sep:",",  header:"head"},
+ {junk:false, tsv:true,  sep:"\t", header:"none"}
+];
+
+function rawFor(v){
+  const rows = MOVIES.map(r => r.join(v.tsv ? "\t" : ","));
+  const head = v.tsv ? "" : NAMES.join(",") + "\n";
+  return (v.junk ? JUNK + "\n" : "") + head + rows.join("\n");
+}
+function defaultCfg(v){
+  return {sep:v.sep, header:v.header, names:false, skiprows:false, usecols:false, nrows:false, index:false};
+}
+
+let variant = VARIANTS[0];
+let cfg = defaultCfg(variant);
+let rawText = rawFor(variant);
+
+function parse(raw, c){
+  let lines = raw.split("\n").filter(l => l.length > 0);
+  if(c.skiprows) lines = lines.slice(1);                 // 1. skip junk rows
+  let rows = lines.map(l => l.split(c.sep));             // 2. split on separator
+  let cols;
+  if(c.names){ cols = NAMES.slice(); }                   // 3a. names wins
+  else if(c.header === "head"){ cols = rows[0].slice(); rows = rows.slice(1); }
+  else { cols = rows[0].map((_, i) => String(i)); }       // 3b. header=None -> 0..n
+  if(c.usecols){                                         // 4. keep title + year
+    let keep = ["title","year"].map(n => cols.indexOf(n)).filter(i => i >= 0);
+    if(keep.length !== 2) keep = [0,1];
+    cols = keep.map(i => cols[i]);
+    rows = rows.map(r => keep.map(i => (r[i] !== undefined ? r[i] : "")));
+  }
+  if(c.nrows) rows = rows.slice(0, 4);                   // 5. first 4 rows only
+  return {cols:cols, rows:rows};
+}
+
+function buildCode(){
+  const p = [];
+  if(cfg.sep === "\t") p.push("sep='\\t'");
+  if(cfg.skiprows) p.push("skiprows=1");
+  if(cfg.names) p.push("names=['title','year','genre','rating','votes']");
+  else if(cfg.header === "none") p.push("header=None");
+  if(cfg.usecols) p.push("usecols=['title','year']");
+  if(cfg.nrows) p.push("nrows=4");
+  if(cfg.index) p.push("index_col='title'");
+  return "pd.read_csv('movies.csv'" + (p.length ? ", " + p.join(", ") : "") + ")";
+}
+
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function tableHTML(p){
+  const ti = cfg.index ? p.cols.indexOf("title") : -1;
+  let h = "<table><thead><tr>";
+  if(ti >= 0) h += "<th></th>";
+  p.cols.forEach((c,i) => { if(i !== ti) h += "<th>" + esc(c) + "</th>"; });
+  h += "</tr></thead><tbody>";
+  p.rows.forEach(r => {
+    h += "<tr>";
+    if(ti >= 0) h += "<th>" + esc(r[ti] !== undefined ? r[ti] : "") + "</th>";
+    r.forEach((v,i) => { if(i !== ti) h += "<td>" + esc(v !== undefined ? v : "") + "</td>"; });
+    h += "</tr>";
+  });
+  return h + "</tbody></table>";
+}
+
+function el(id){ return document.getElementById(id); }
+function setActive(k, on){
+  document.querySelector('button[data-p="' + k + '"]').classList.toggle("active", on);
+}
+function update(){
+  let p = parse(rawText, cfg);
+  const named = p.cols.indexOf("title") >= 0;
+  if(!named){ cfg.usecols = false; cfg.index = false; p = parse(rawText, cfg); }
+  el("code").textContent = buildCode();
+  el("tbl").innerHTML = tableHTML(p);
+  el("shape").textContent = p.rows.length + " rows × " + p.cols.length + " columns";
+  setActive("sep", cfg.sep === "\t");
+  setActive("names", cfg.names);
+  setActive("header", cfg.header === "none");
+  setActive("skiprows", cfg.skiprows);
+  setActive("usecols", cfg.usecols);
+  setActive("nrows", cfg.nrows);
+  setActive("index", cfg.index);
+  document.querySelector('button[data-p="usecols"]').disabled = !named;
+  document.querySelector('button[data-p="index"]').disabled = !named;
+}
+
+document.querySelectorAll("#vtabs button").forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll("#vtabs button").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    variant = VARIANTS[+b.dataset.v];
+    cfg = defaultCfg(variant);
+    rawText = rawFor(variant);
+    el("raw").textContent = rawText;
+    update();
+  };
+});
+document.querySelectorAll('#params button[data-p]').forEach(b => {
+  b.onclick = () => {
+    const k = b.dataset.p;
+    if(k === "sep") cfg.sep = (cfg.sep === "," ? "\t" : ",");
+    else if(k === "header") cfg.header = (cfg.header === "head" ? "none" : "head");
+    else if(k === "names") cfg.names = !cfg.names;
+    else if(k === "skiprows") cfg.skiprows = !cfg.skiprows;
+    else if(k === "usecols") { if(!b.disabled) cfg.usecols = !cfg.usecols; }
+    else if(k === "nrows") cfg.nrows = !cfg.nrows;
+    else if(k === "index") { if(!b.disabled) cfg.index = !cfg.index; }
+    update();
+  };
+});
+el("reset").onclick = () => { cfg = defaultCfg(variant); update(); };
+
+/* ---- quiz ---- */
+const QUIZ = [
+ {q:"A file has one junk line at the very top (e.g. \"## scraped from web 2024\"). Which parameter skips it?",
+  opts:["skiprows=1","nrows=4","sep='\\t'","index_col='title'"], a:0},
+ {q:"Your file has NO header row — the first line is already data. Which combo labels the columns correctly?",
+  opts:["names=[...] + header=None","usecols=['title','year']","header=0","skiprows=1"], a:0},
+ {q:"A huge CSV has 30 columns but you only need 2 of them. Which parameter loads just those two?",
+  opts:["usecols=['title','year']","chunksize=10000","nrows=4","header=None"], a:0,
+  note:"chunksize saves memory by reading the file in pieces — but it still reads every column. usecols is the one that drops columns."}
+];
+let qCorrect = 0, qDone = 0;
+QUIZ.forEach((item, qi) => {
+  const div = document.createElement("div");
+  div.className = "q";
+  const p = document.createElement("p");
+  p.innerHTML = "<strong>Q" + (qi+1) + ".</strong> " + item.q;
+  div.appendChild(p);
+  const opts = document.createElement("div");
+  opts.className = "opts";
+  item.opts.forEach((t, oi) => {
+    const b = document.createElement("button");
+    b.textContent = t;
+    b.onclick = () => {
+      if(div.dataset.done) return;
+      div.dataset.done = "1"; qDone++;
+      if(oi === item.a){ b.classList.add("correct"); qCorrect++; }
+      else { b.classList.add("wrong"); opts.children[item.a].classList.add("correct"); }
+      if(item.note){ const n = document.createElement("p"); n.className = "note"; n.textContent = item.note; div.appendChild(n); }
+      el("score").textContent = "Score: " + qCorrect + " / " + QUIZ.length;
+    };
+    opts.appendChild(b);
+  });
+  div.appendChild(opts);
+  el("quiz").appendChild(div);
+});
+
+/* ---- init ---- */
+el("raw").textContent = rawText;
+update();
+</script>
+</body>
+</html>
