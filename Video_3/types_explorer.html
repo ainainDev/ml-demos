@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Types of Machine Learning — Explorer (Day 3)</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#38bdf8; --txt:#f1f5f9; --sub:#94a3b8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         background:var(--bg); color:var(--txt); padding:16px; }
+  h1 { font-size:1.35rem; margin:0 0 4px; }
+  p.sub { color:var(--sub); margin:0 0 14px; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .tabs button { background:var(--panel); color:var(--txt); border:2px solid transparent;
+                 border-radius:10px; padding:10px 16px; font-size:.95rem; cursor:pointer; }
+  .tabs button.active { border-color:var(--line); background:#0c4a6e; font-weight:700; }
+  .card { background:var(--panel); border:1px solid #334155; border-radius:12px;
+          padding:16px; margin-bottom:12px; }
+  .card h2 { margin:0 0 8px; font-size:1.1rem; color:var(--line); }
+  .def { font-size:1rem; line-height:1.55; }
+  ul { margin:6px 0; padding-left:20px; line-height:1.6; }
+  .ex { background:#0c4a6e; border-left:4px solid var(--line); border-radius:0 8px 8px 0;
+        padding:10px 12px; margin-top:10px; font-size:.95rem; }
+  .ex b { color:var(--line); }
+  #quiz .q { margin:12px 0; padding:12px; background:#0b1220; border-radius:8px;
+             border:1px solid #334155; }
+  #quiz .opts button { display:block; width:100%; text-align:left; margin:6px 0;
+                       background:#1e293b; color:var(--txt); border:1px solid #475569;
+                       border-radius:8px; padding:8px 12px; cursor:pointer; font-size:.92rem; }
+  #quiz .opts button.correct { border-color:#4ade80; background:#052e16; }
+  #quiz .opts button.wrong { border-color:#f43f5e; background:#3f1d1d; }
+  #quiz .feedback { font-size:.9rem; margin-top:6px; min-height:1.2em; color:var(--sub); }
+  #score { font-weight:700; color:#4ade80; margin-top:10px; }
+  footer { color:var(--sub); font-size:.8rem; margin-top:18px; }
+</style>
+</head>
+<body>
+<h1>🔍 Types of Machine Learning — Interactive Explorer</h1>
+<p class="sub">Day 3 · pick a type to see how it works, its subtypes, and a concrete example. Then test yourself!</p>
+
+<div class="tabs" id="tabs">
+  <button data-t="supervised" class="active">Supervised</button>
+  <button data-t="unsupervised">Unsupervised</button>
+  <button data-t="semi">Semi-supervised</button>
+  <button data-t="rl">Reinforcement</button>
+</div>
+
+<div class="card" id="info"></div>
+
+<div class="card" id="quiz">
+  <h2>🧪 You try — mini quiz</h2>
+  <div id="questions"></div>
+  <div id="score"></div>
+</div>
+
+<footer>Made for CampusX Day 3 — Types of Machine Learning.</footer>
+
+<script>
+const TYPES = {
+  supervised: {
+    name: "Supervised Learning",
+    color: "#38bdf8",
+    def: "The machine learns from <b>labelled data</b> — every training example comes with the correct answer. The model learns the mapping from inputs to outputs, then predicts labels for new, unseen data.",
+    subs: ["<b>Regression</b> — predict a continuous number (e.g. house price, temperature).",
+           "<b>Classification</b> — predict a category / class (e.g. spam vs not-spam)."],
+    ex: "<b>IQ + CGPA → Placement.</b> Train on past students whose IQ, CGPA and placement outcome are all known; predict whether a new student will be placed."
+  },
+  unsupervised: {
+    name: "Unsupervised Learning",
+    color: "#4ade80",
+    def: "The machine gets <b>unlabelled data</b> — no correct answers at all. It must discover hidden structure, patterns and groups on its own.",
+    subs: ["<b>Clustering</b> — group similar items (e.g. customer segmentation).",
+           "<b>Dimensionality reduction</b> — compress features while keeping structure (e.g. MNIST 2-D plot).",
+           "<b>Anomaly detection</b> — spot rare, suspicious outliers (e.g. fraud detection).",
+           "<b>Association rules</b> — find items that co-occur (e.g. the famous beer-and-diapers basket rule)."],
+    ex: "<b>Customer segmentation.</b> Feed purchase history with no labels; the model discovers groups like bargain hunters vs premium buyers."
+  },
+  semi: {
+    name: "Semi-supervised Learning",
+    color: "#c084fc",
+    def: "A hybrid: <b>a small labelled set + a large unlabelled set</b>. Label a few examples by hand, let the model auto-label the rest, then learn from both.",
+    subs: ["<b>Self-training</b> — label a few, auto-label the rest, retrain iteratively.",
+           "<b>Pseudo-labelling</b> — confident predictions become training labels."],
+    ex: "<b>Google Photos face grouping.</b> You label a few faces as 'Ainain'; the model auto-labels the rest of your photos."
+  },
+  rl: {
+    name: "Reinforcement Learning",
+    color: "#f59e0b",
+    def: "An <b>agent</b> acts inside an <b>environment</b> and learns by trial and error from <b>rewards and punishments</b> — no labelled answers, just feedback signals.",
+    subs: ["<b>Policy learning</b> — learn which action to take in each state.",
+           "<b>Value learning</b> — learn how good each state/action is (e.g. Q-learning)."],
+    ex: "<b>Maze agent → AlphaGo.</b> A maze agent earns +1 for reaching the exit, −1 for hitting walls; AlphaGo learned the same way to beat world champions."
+  }
+};
+
+const QUIZ = [
+  { q: "Predicting a house price from its size and location is…",
+    opts: ["Classification", "Regression", "Clustering", "Reinforcement learning"], ans: 1 },
+  { q: "Grouping customers into segments with no labels given is…",
+    opts: ["Supervised classification", "Reinforcement learning", "Clustering (unsupervised)", "Regression"], ans: 2 },
+  { q: "An agent learns to play a game from +1/−1 reward signals. That is…",
+    opts: ["Supervised learning", "Reinforcement learning", "Association rules", "Dimensionality reduction"], ans: 1 }
+];
+
+const info = document.getElementById("info");
+function renderInfo(key) {
+  const t = TYPES[key];
+  info.innerHTML =
+    `<h2 style="color:${t.color}">▸ ${t.name}</h2>
+     <div class="def">${t.def}</div>
+     <ul>${t.subs.map(s => `<li>${s}</li>`).join("")}</ul>
+     <div class="ex"><b>Example:</b> ${t.ex}</div>`;
+}
+document.getElementById("tabs").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  document.querySelectorAll("#tabs button").forEach(x => x.classList.remove("active"));
+  b.classList.add("active"); renderInfo(b.dataset.t);
+});
+renderInfo("supervised");
+
+const qwrap = document.getElementById("questions");
+let score = 0, answered = {};
+QUIZ.forEach((item, qi) => {
+  const d = document.createElement("div");
+  d.className = "q";
+  d.innerHTML = `<b>Q${qi+1}.</b> ${item.q}<div class="opts"></div><div class="feedback"></div>`;
+  const opts = d.querySelector(".opts"), fb = d.querySelector(".feedback");
+  item.opts.forEach((o, oi) => {
+    const btn = document.createElement("button");
+    btn.textContent = o;
+    btn.onclick = () => {
+      if (answered[qi]) return;
+      answered[qi] = true;
+      const ok = oi === item.ans;
+      btn.classList.add(ok ? "correct" : "wrong");
+      if (!ok) opts.children[item.ans].classList.add("correct");
+      fb.textContent = ok ? "✅ Correct!" : "❌ Not quite — the highlighted answer is right.";
+      if (ok) score++;
+      document.getElementById("score").textContent =
+        `Score: ${score}/${Object.keys(answered).length} answered`;
+    };
+    opts.appendChild(btn);
+  });
+  qwrap.appendChild(d);
+});
+</script>
+</body>
+</html>

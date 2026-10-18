@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Instance-Based vs Model-Based Learning (Day 6)</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#38bdf8; --txt:#f1f5f9; --sub:#94a3b8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         background:var(--bg); color:var(--txt); padding:16px; }
+  h1 { font-size:1.3rem; margin:0 0 4px; }
+  p.sub { color:var(--sub); margin:0 0 12px; font-size:.95rem; }
+  .wrap { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:820px) { .wrap { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid #334155; border-radius:12px; padding:12px; }
+  .panel h2 { margin:0 0 4px; font-size:1.02rem; }
+  .panel p.tag { margin:0 0 8px; color:var(--sub); font-size:.85rem; }
+  canvas { width:100%; height:auto; background:#0b1220; border-radius:8px; cursor:crosshair;
+           display:block; touch-action:none; }
+  .result { min-height:3.2em; font-size:.92rem; margin-top:8px; line-height:1.5; }
+  .controls { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; align-items:center; }
+  .controls button { background:var(--panel); color:var(--txt); border:1px solid #475569;
+                     border-radius:8px; padding:9px 14px; cursor:pointer; font-size:.9rem; }
+  .controls button.active { border-color:var(--line); background:#0c4a6e; font-weight:700; }
+  .note { background:#0c4a6e; border-left:4px solid var(--line); border-radius:0 8px 8px 0;
+          padding:10px 12px; margin-top:12px; font-size:.9rem; line-height:1.55; }
+  .blue { color:#38bdf8; font-weight:700; } .red { color:#f87171; font-weight:700; }
+</style>
+</head>
+<body>
+<h1>Instance-Based vs Model-Based Learning</h1>
+<p class="sub">Day 6 · SAME dataset (IQ vs CGPA, <span class="blue">blue = placed</span>,
+<span class="red">red = not placed</span>). Click on a plot to ask <i>"will this student be placed?"</i>.
+Watch how the two learners answer differently.</p>
+
+<div class="controls">
+  <span style="color:var(--sub);font-size:.9rem">Add-mode:</span>
+  <button id="mOff" class="active">✋ Ask (no adding)</button>
+  <button id="mBlue">🔵 Add placed point</button>
+  <button id="mRed">🔴 Add not-placed point</button>
+  <button id="reset">↺ Reset data</button>
+</div>
+
+<div class="wrap">
+  <div class="panel">
+    <h2>🧠 Instance-based <span style="color:var(--sub);font-weight:400">— memorizes</span></h2>
+    <p class="tag">K-nearest neighbour (k=1): finds the stored point closest to your click and copies its label.</p>
+    <canvas id="cInst" width="480" height="400"></canvas>
+    <div class="result" id="rInst">Click anywhere on the plot to classify a new student.</div>
+  </div>
+  <div class="panel">
+    <h2>📐 Model-based <span style="color:var(--sub);font-weight:400">— generalizes</span></h2>
+    <p class="tag">Logistic regression: learns ONE decision line from the data; classifies by which side a point falls on.</p>
+    <canvas id="cMod" width="480" height="400"></canvas>
+    <div class="result" id="rMod">Click anywhere on the plot to classify a new student.</div>
+  </div>
+</div>
+
+<div class="note">
+  💾 <b>Storage note:</b> the instance-based learner must keep <b>all N training points</b>
+  (N = <span id="nPts"></span> right now) to answer anything — memorization is expensive.
+  The model-based learner throws the data away and keeps just the line's parameters
+  (<b>w₁, w₂, b</b> — three numbers). <i>That</i> is generalization.
+</div>
+
+<script>
+"use strict";
+// Dataset: [IQ, CGPA, label]  label 1 = placed (blue), 0 = not placed (red)
+const SEED = [
+  [128,3.8,1],[122,3.6,1],[118,3.9,1],[130,3.4,1],[115,3.3,1],[124,3.1,1],
+  [120,3.7,1],[132,3.9,1],[112,3.4,1],[126,3.2,1],
+  [95,2.4,0],[102,2.8,0],[88,2.2,0],[108,2.5,0],[98,3.0,0],[92,2.9,0],
+  [105,2.3,0],[85,3.1,0],[110,2.9,0],[96,2.6,0],
+  [113,2.8,0],[116,2.9,1]  // boundary cases: nearest-neighbour says one thing, the line may say another
+];
+let pts = SEED.map(p => p.slice());
+
+const XMIN=80, XMAX=140, YMIN=1.8, YMAX=4.2;
+const COL = {1:"#38bdf8", 0:"#f87171"};
+
+function drawBase(ctx) {
+  const W=ctx.canvas.width, H=ctx.canvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#0b1220"; ctx.fillRect(0,0,W,H);
+  // grid + labels
+  ctx.strokeStyle="#1e293b"; ctx.fillStyle="#64748b"; ctx.font="11px system-ui";
+  for (let iq=80;iq<=140;iq+=10){ const x=px(iq,W); ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H-28);ctx.stroke(); ctx.fillText(iq,x-8,H-12); }
+  for (let cg=2.0;cg<=4.0;cg+=0.5){ const y=py(cg,H); ctx.beginPath();ctx.moveTo(34,y);ctx.lineTo(W,y);ctx.stroke(); ctx.fillText(cg.toFixed(1),6,y+4); }
+  ctx.fillStyle="#94a3b8"; ctx.fillText("IQ →", W-46, H-12); ctx.fillText("CGPA", 6, 16);
+  ctx.save(); ctx.translate(16, 200); ctx.rotate(-Math.PI/2); ctx.restore();
+}
+function px(iq,W){ return 34 + (iq-XMIN)/(XMAX-XMIN)*(W-34-10); }
+function py(cg,H){ return (H-28) - (cg-YMIN)/(YMAX-YMIN)*(H-28-30); }
+function toData(ev, cv){
+  const r=cv.getBoundingClientRect();
+  const x=(ev.clientX-r.left)/r.width*cv.width, y=(ev.clientY-r.top)/r.height*cv.height;
+  const iq=XMIN+(x-34)/(cv.width-34-10)*(XMAX-XMIN);
+  const cg=YMIN+((cv.height-28-y))/(cv.height-28-30)*(YMAX-YMIN);
+  return [iq,cg];
+}
+function drawPts(ctx, highlightIdx){
+  const W=ctx.canvas.width, H=ctx.canvas.height;
+  pts.forEach((p,i)=>{
+    const x=px(p[0],W), y=py(p[1],H);
+    if (i===highlightIdx){ ctx.beginPath(); ctx.arc(x,y,11,0,7); ctx.strokeStyle="#facc15"; ctx.lineWidth=3; ctx.stroke(); }
+    ctx.beginPath(); ctx.arc(x,y,6,0,7); ctx.fillStyle=COL[p[2]]; ctx.fill();
+    ctx.strokeStyle="#0f172a"; ctx.lineWidth=1.5; ctx.stroke();
+  });
+}
+// ---- logistic regression (model-based learner) ----
+let W=[0,0], B=0;
+function fitModel(){
+  // normalise
+  const mX=110, sX=17, mY=3.0, sY=0.62;
+  W=[0,0]; B=0; const lr=0.6, it=400;
+  for(let k=0;k<it;k++){
+    let g1=0,g2=0,gb=0;
+    for(const p of pts){
+      const x1=(p[0]-mX)/sX, x2=(p[1]-mY)/sY;
+      const z=W[0]*x1+W[1]*x2+B, pr=1/(1+Math.exp(-z));
+      const e=pr-p[2]; g1+=e*x1; g2+=e*x2; gb+=e;
+    }
+    W[0]-=lr*g1/pts.length; W[1]-=lr*g2/pts.length; B-=lr*gb/pts.length;
+  }
+  // convert line back to original coords: w1*(iq-mX)/sX + w2*(cg-mY)/sY + b = 0
+  const a=W[0]/sX, b=W[1]/sY, c=B - W[0]*mX/sX - W[1]*mY/sY;
+  return {a,b,c}; // a*iq + b*cg + c = 0  =>  cg = -(a*iq + c)/b
+}
+let line=fitModel();
+function drawLine(ctx){
+  const W_=ctx.canvas.width, H_=ctx.canvas.height, {a,b,c}=line;
+  if (Math.abs(b)<1e-9) return;
+  const y1=-(a*XMIN+c)/b, y2=-(a*XMAX+c)/b;
+  ctx.beginPath(); ctx.moveTo(px(XMIN,W_),py(y1,H_)); ctx.lineTo(px(XMAX,W_),py(y2,H_));
+  ctx.strokeStyle="#4ade80"; ctx.lineWidth=3; ctx.stroke();
+}
+function classify(iq,cg){ return line.a*iq+line.b*cg+line.c >= 0 ? 1 : 0; }
+
+// ---- rendering ----
+const cInst=document.getElementById("cInst"), cMod=document.getElementById("cMod");
+const rInst=document.getElementById("rInst"), rMod=document.getElementById("rMod");
+let hl=-1;
+function render(){
+  line=fitModel();
+  [cInst,cMod].forEach(cv=>{ const ctx=cv.getContext("2d"); drawBase(ctx); drawPts(ctx, cv===cInst?hl:-1); });
+  const ctxM=cMod.getContext("2d"); drawLine(ctxM);
+  document.getElementById("nPts").textContent=pts.length;
+}
+function nearest(iq,cg){
+  let best=-1,bd=1e9;
+  pts.forEach((p,i)=>{ const d=(p[0]-iq)**2+(p[1]-cg)**2; if(d<bd){bd=d;best=i;} });
+  return [best,Math.sqrt(bd)];
+}
+let mode="ask";
+const mOff=document.getElementById("mOff"), mBlue=document.getElementById("mBlue"), mRed=document.getElementById("mRed");
+function setMode(m,btn){ mode=m; [mOff,mBlue,mRed].forEach(b=>b.classList.remove("active")); btn.classList.add("active"); }
+mOff.onclick=()=>setMode("ask",mOff); mBlue.onclick=()=>setMode(1,mBlue); mRed.onclick=()=>setMode(0,mRed);
+document.getElementById("reset").onclick=()=>{ pts=SEED.map(p=>p.slice()); hl=-1; render();
+  rInst.textContent="Data reset. Click a plot to ask again."; rMod.textContent="Data reset. Click a plot to ask again."; };
+
+function onClick(ev,cv){
+  const [iq,cg]=toData(ev,cv);
+  if (mode==="ask"){
+    if (cv===cInst){
+      const [bi,dist]=nearest(iq,cg); hl=bi; render();
+      const lbl=pts[bi][2];
+      rInst.innerHTML=`Clicked (IQ ${iq.toFixed(0)}, CGPA ${cg.toFixed(2)}): nearest stored point is `+
+        `<span class="${lbl?'blue':'red'}">${lbl?"PLACED (blue)":"NOT PLACED (red)"}</span> `+
+        `(dist ${dist.toFixed(1)}) → predicted: <b>${lbl?"PLACED ✅":"NOT PLACED ❌"}</b>. `+
+        `<i>It just copied its nearest neighbour.</i>`;
+    } else {
+      const lbl=classify(iq,cg); render();
+      rMod.innerHTML=`Clicked (IQ ${iq.toFixed(0)}, CGPA ${cg.toFixed(2)}): `+
+        `falls on the <b>${lbl?"PLACED":"NOT PLACED"}</b> side of the line → predicted: `+
+        `<span class="${lbl?'blue':'red'}">${lbl?"PLACED ✅":"NOT PLACED ❌"}</span>. `+
+        `<i>It never looked at the stored points.</i>`;
+    }
+  } else {
+    pts.push([iq,cg,mode]); hl=-1; render();
+    rInst.textContent=`Added a ${mode?"blue (placed)":"red (not placed)"} point at (IQ ${iq.toFixed(0)}, CGPA ${cg.toFixed(2)}). Both panels updated.`;
+    rMod.textContent=rInst.textContent;
+  }
+}
+cInst.addEventListener("pointerdown",e=>onClick(e,cInst));
+cMod.addEventListener("pointerdown",e=>onClick(e,cMod));
+render();
+</script>
+</body>
+</html>

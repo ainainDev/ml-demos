@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overfitting Demo — Polynomial Regression (Day 7)</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#38bdf8; --txt:#f1f5f9; --sub:#94a3b8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         background:var(--bg); color:var(--txt); padding:16px; max-width:1000px; margin-inline:auto; }
+  h1 { font-size:1.3rem; margin:0 0 4px; }
+  p.sub { color:var(--sub); margin:0 0 12px; font-size:.95rem; line-height:1.5; }
+  .panel { background:var(--panel); border:1px solid #334155; border-radius:12px; padding:12px; margin-bottom:14px; }
+  canvas { width:100%; height:auto; background:#0b1220; border-radius:8px; display:block; }
+  .controls { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:10px 0; }
+  input[type=range] { flex:1; min-width:200px; accent-color:#38bdf8; }
+  button { background:var(--panel); color:var(--txt); border:1px solid #475569;
+           border-radius:8px; padding:9px 14px; cursor:pointer; font-size:.9rem; }
+  button:hover { border-color:var(--line); }
+  .badge { background:#0c4a6e; border-radius:8px; padding:8px 14px; font-size:1.05rem; font-weight:700; }
+  .legend { display:flex; gap:16px; font-size:.85rem; color:var(--sub); flex-wrap:wrap; margin-top:6px; }
+  .sw { display:inline-block; width:14px; height:4px; border-radius:2px; vertical-align:middle; margin-right:5px; }
+  footer { color:var(--sub); font-size:.8rem; margin-top:14px; }
+</style>
+</head>
+<body>
+<h1>📉 Overfitting Demo — Polynomial Regression on Noisy Sine Data</h1>
+<p class="sub">Day 7 · The grey curve is the <b>true signal</b> (a sine wave). Grey dots are <b>noisy training data</b>.
+We fit polynomials of increasing degree to the dots — and watch what happens on <b>fresh test data</b>
+(cyan dots, new noise each resample).</p>
+
+<div class="panel">
+  <div class="controls">
+    <span style="font-weight:700">Polynomial degree:</span>
+    <input type="range" id="deg" min="1" max="15" step="1" value="4">
+    <span class="badge" id="degVal">degree 4</span>
+    <button id="regen">🎲 Generate new data</button>
+  </div>
+  <canvas id="fit" width="640" height="300"></canvas>
+  <div class="legend">
+    <span><span class="sw" style="background:#94a3b8"></span>train points</span>
+    <span><span class="sw" style="background:#22d3ee"></span>test points (fresh noise)</span>
+    <span><span class="sw" style="background:#475569"></span>true function</span>
+    <span><span class="sw" style="background:#38bdf8"></span>fitted polynomial</span>
+  </div>
+</div>
+
+<div class="panel">
+  <b>Train vs test error as degree grows</b>
+  <canvas id="err" width="640" height="260"></canvas>
+  <div class="legend">
+    <span><span class="sw" style="background:#38bdf8"></span>train error (keeps falling)</span>
+    <span><span class="sw" style="background:#f87171"></span>test error (falls, then explodes)</span>
+    <span style="color:#facc15">◀ underfitting · sweet spot · overfitting ▶</span>
+  </div>
+  <p class="sub" id="verdict" style="margin-top:8px"></p>
+</div>
+
+<footer>True function y = sin(2πx) + noise(σ=0.4) · fit by least squares with tiny ridge for stability.</footer>
+
+<script>
+"use strict";
+const N_TR=20, SIG=0.4;
+let train=[], test=[];
+function gauss(){ let u=0,v=0; while(!u)u=Math.random(); while(!v)v=Math.random();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+function resample(){
+  train=[]; test=[];
+  for(let i=0;i<N_TR;i++){ const x=Math.random();
+    train.push([x, Math.sin(2*Math.PI*x)+SIG*gauss()]); }
+  for(let i=0;i<120;i++){ const x=i/119;
+    test.push([x, Math.sin(2*Math.PI*x)+SIG*gauss()]); }
+}
+// solve (X'X + λI)β = X'y via Gaussian elimination
+function polyfit(pts, d){
+  const n=pts.length, m=d+1, lam=1e-8;
+  const A=[], b=[];
+  for(let i=0;i<m;i++){ A.push(new Array(m).fill(0)); b.push(0); }
+  for(const [x,y] of pts){
+    const p=[1]; for(let k=1;k<=d;k++) p.push(p[k-1]*x);
+    for(let i=0;i<m;i++){ b[i]+=p[i]*y; for(let j=0;j<m;j++) A[i][j]+=p[i]*p[j]; }
+  }
+  for(let i=0;i<m;i++) A[i][i]+=lam;
+  for(let c=0;c<m;c++){ // partial pivot
+    let piv=c; for(let r=c+1;r<m;r++) if(Math.abs(A[r][c])>Math.abs(A[piv][c])) piv=r;
+    [A[c],A[piv]]=[A[piv],A[c]]; [b[c],b[piv]]=[b[piv],b[c]];
+    const div=A[c][c]||1e-12;
+    for(let r=c+1;r<m;r++){ const f=A[r][c]/div;
+      for(let k=c;k<m;k++) A[r][k]-=f*A[c][k]; b[r]-=f*b[c]; }
+  }
+  const beta=new Array(m).fill(0);
+  for(let c=m-1;c>=0;c--){ let s=b[c]; for(let k=c+1;k<m;k++) s-=A[c][k]*beta[k];
+    beta[c]=s/(A[c][c]||1e-12); }
+  return beta;
+}
+const evalP=(beta,x)=>{ let y=0,p=1; for(const c of beta){ y+=c*p; p*=x; } return y; };
+const mse=(beta,pts)=>pts.reduce((s,[x,y])=>s+(evalP(beta,x)-y)**2,0)/pts.length;
+
+const cf=document.getElementById("fit"), ce=document.getElementById("err");
+const xf=cf.getContext("2d"), xe=ce.getContext("2d");
+const deg=document.getElementById("deg"), degVal=document.getElementById("degVal"),
+      verdict=document.getElementById("verdict");
+function X_(x,W){ return 8+x*(W-16); } function Y_(y,H){ return (H-8)-y*(H-40); }
+
+function drawFit(d){
+  const W=cf.width,H=cf.height; xf.clearRect(0,0,W,H);
+  xf.strokeStyle="#475569"; xf.lineWidth=2; xf.beginPath();
+  for(let i=0;i<=100;i++){ const x=i/100, y=Y_((Math.sin(2*Math.PI*x)+2.2)/4.4,H);
+    i?xf.lineTo(X_(x,W),y):xf.moveTo(X_(x,W),y); } xf.stroke();
+  const beta=polyfit(train,d), tr=mse(beta,train), te=mse(beta,test);
+  xf.strokeStyle="#38bdf8"; xf.lineWidth=3; xf.beginPath();
+  for(let i=0;i<=200;i++){ const x=i/200, y=evalP(beta,x);
+    const yy=Y_((y+2.2)/4.4,H), xx=X_(x,W);
+    i?xf.lineTo(xx,yy):xf.moveTo(xx,yy); } xf.stroke();
+  for(const [x,y] of train){ xf.beginPath(); xf.arc(X_(x,W),Y_((y+2.2)/4.4,H),3.5,0,7);
+    xf.fillStyle="#94a3b8"; xf.fill(); }
+  for(const [x,y] of test){ xf.beginPath(); xf.arc(X_(x,W),Y_((y+2.2)/4.4,H),2.5,0,7);
+    xf.fillStyle="#22d3ee"; xf.globalAlpha=.55; xf.fill(); xf.globalAlpha=1; }
+  xf.fillStyle="#f1f5f9"; xf.font="13px system-ui";
+  xf.fillText(`train MSE = ${tr.toFixed(3)}`, 14, 22);
+  xf.fillStyle="#f87171"; xf.fillText(`test MSE = ${te.toFixed(3)}`, 14, 42);
+  const zone = d<=3 ? ["UNDERFITTING","#facc15"," — too simple: both errors high. The model misses the sine shape entirely."]
+    : d<=6 ? ["SWEET SPOT","#4ade80"," — captures the sine wave and ignores the noise. Best generalization."]
+    : ["OVERFITTING","#f87171"," — wiggles through every noisy dot: train error ≈ 0, test error explodes."];
+  verdict.innerHTML=`<b style="color:${zone[1]}">Degree ${d}: ${zone[0]}</b><span style="color:var(--sub)">${zone[2]}</span>`;
+}
+
+function drawErr(cur){
+  const W=ce.width,H=ce.height; xe.clearRect(0,0,W,H);
+  const D=[]; for(let d=1;d<=15;d++){ const b=polyfit(train,d); D.push([d,mse(b,train),mse(b,test)]); }
+  const mx=Math.max(...D.map(r=>r[2]))*1.05, mxx=v=>v, l2x=v=>Math.log10(v+1e-6);
+  // use log scale for visibility
+  const lo=Math.log10(Math.min(...D.map(r=>Math.min(r[1],r[2])))*0.9),
+        hi=Math.log10(Math.max(...D.map(r=>r[2]))*1.05);
+  const Xv=d=>30+(d-1)/14*(W-46), Yv=v=>H-30-((Math.log10(v)-lo)/(hi-lo))*(H-60);
+  // zones
+  const zones=[[1,3,"#facc15","underfitting"],[4,6,"#4ade80","sweet spot"],[7,15,"#f87171","overfitting"]];
+  xe.font="12px system-ui";
+  for(const [a,b2,c,lbl] of zones){
+    xe.fillStyle=c+"22"; xe.fillRect(Xv(a)-((Xv(2)-Xv(1))/2), 8,
+      (Xv(b2)-Xv(a))+(Xv(2)-Xv(1)), H-38);
+    xe.fillStyle=c; xe.fillText(lbl, Xv((a+b2)/2)-28, 24);
+  }
+  const line=(idx,col)=>{ xe.strokeStyle=col; xe.lineWidth=2.5; xe.beginPath();
+    D.forEach(([d,t,s],i)=>{ const x=Xv(d), y=Yv(idx? s:t);
+      i?xe.lineTo(x,y):xe.moveTo(x,y); }); xe.stroke(); };
+  line(0,"#38bdf8"); line(1,"#f87171");
+  for(let d=1;d<=15;d+=2){ xe.fillStyle="#94a3b8"; xe.fillText(d,Xv(d)-3,H-12); }
+  // current-degree marker
+  const [dc,tr,te]=D[cur-1];
+  xe.strokeStyle="#fff"; xe.setLineDash([4,3]); xe.beginPath();
+  xe.moveTo(Xv(dc),8); xe.lineTo(Xv(dc),H-30); xe.stroke(); xe.setLineDash([]);
+  xe.fillStyle="#38bdf8"; xe.beginPath(); xe.arc(Xv(dc),Yv(tr),5,0,7); xe.fill();
+  xe.fillStyle="#f87171"; xe.beginPath(); xe.arc(Xv(dc),Yv(te),5,0,7); xe.fill();
+}
+
+function refresh(){ const d=+deg.value; degVal.textContent="degree "+d; drawFit(d); drawErr(d); }
+deg.addEventListener("input",refresh);
+document.getElementById("regen").onclick=()=>{ resample(); refresh(); };
+resample(); refresh();
+</script>
+</body>
+</html>
