@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teach the Machine to Add — no rules programmed</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 720px; margin: 24px auto; padding: 0 16px; line-height: 1.5; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #64748b; margin-top: 0; }
+  .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  .rule { font-size: 22px; font-weight: 700; text-align: center; margin: 8px 0; }
+  .rule .w { color: #2563eb; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; margin-right: 8px; }
+  button.ghost { background: #e2e8f0; color: #0f172a; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  td, th { border-bottom: 1px solid #e2e8f0; padding: 5px 8px; text-align: center; }
+  canvas { width: 100%; height: 190px; border: 1px solid #e2e8f0; border-radius: 10px; }
+  .test { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  input { font-size: 16px; padding: 8px; width: 90px; border-radius: 8px;
+          border: 1px solid #cbd5e1; }
+  .answer { font-size: 18px; font-weight: 700; color: #16a34a; }
+  .note { font-size: 13px; color: #64748b; }
+</style>
+</head>
+<body>
+<h2>🤖 Teach the machine to add</h2>
+<p class="sub">Nobody programmed the rule "add the two numbers". The machine only ever sees <b>examples</b> — and discovers the rule itself. That is machine learning.</p>
+
+<div class="card">
+  <button id="add">+ Add 10 examples</button>
+  <button id="reset" class="ghost">Reset</button>
+  <p class="note">Examples seen so far: <b id="count">0</b></p>
+  <div class="rule">ŷ = <span class="w" id="w1">?.??</span>·x₁ + <span class="w" id="w2">?.??</span>·x₂</div>
+  <p class="note" style="text-align:center">The machine's current guess at the rule. Watch both weights crawl toward <b>1.00</b>.</p>
+  <canvas id="plot" width="680" height="190"></canvas>
+</div>
+
+<div class="card">
+  <b>Recent examples the machine learned from</b>
+  <table><thead><tr><th>x₁</th><th>x₂</th><th>y = x₁+x₂</th></tr></thead>
+  <tbody id="rows"><tr><td colspan="3" class="note">none yet — press the button</td></tr></tbody></table>
+</div>
+
+<div class="card">
+  <b>Test it — give it numbers it has never seen</b>
+  <div class="test">
+    <input id="a" type="number" value="7"> +
+    <input id="b" type="number" value="5">
+    <button id="go">Predict</button>
+    <span class="answer" id="out"></span>
+  </div>
+  <p class="note">The correct answer is 12. With enough examples the machine nails unseen inputs too — that is <b>generalization</b>.</p>
+</div>
+
+<script>
+let X = [], Y = [], hist = [];
+const $ = id => document.getElementById(id);
+
+function fit() {
+  // least squares for y = w1*x1 + w2*x2  (no intercept): w = (X'X)^-1 X'y
+  let a=0,b=0,c=0,d=0,e=0;
+  for (let i=0;i<X.length;i++){
+    const x1=X[i][0], x2=X[i][1], y=Y[i];
+    a+=x1*x1; b+=x1*x2; c+=x2*x2; d+=x1*y; e+=x2*y;
+  }
+  const det=a*c-b*b;
+  if (Math.abs(det)<1e-9 || X.length<2) return null;
+  return [(c*d-b*e)/det, (a*e-b*d)/det];
+}
+function refresh() {
+  const w = fit();
+  $('count').textContent = X.length;
+  if (w) {
+    $('w1').textContent=w[0].toFixed(2); $('w2').textContent=w[1].toFixed(2);
+    hist.push(w);
+  } else { $('w1').textContent='?.??'; $('w2').textContent='?.??'; }
+  const tb=$('rows'); tb.innerHTML='';
+  X.slice(-8).reverse().forEach((p,k)=>{
+    const i=X.length-1-k, tr=document.createElement('tr');
+    tr.innerHTML=`<td>${p[0]}</td><td>${p[1]}</td><td>${Y[i]}</td>`;
+    tb.appendChild(tr);
+  });
+  draw();
+}
+function draw(){
+  const cv=$('plot'), ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  const pad=34, x0=pad, x1=W-pad, y0=H-26, y1=14;
+  ctx.strokeStyle='#cbd5e1'; ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y0); ctx.stroke();
+  const yOf=v=> y0-(v/1.4)*(y0-y1);
+  ctx.strokeStyle='#94a3b8'; ctx.setLineDash([5,4]); ctx.beginPath();
+  ctx.moveTo(x0,yOf(1)); ctx.lineTo(x1,yOf(1)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle='#64748b'; ctx.font='11px sans-serif';
+  ctx.fillText('weight value', 4, y1+2); ctx.fillText('examples →', x1-70, H-8);
+  ctx.fillText('1.00 = true rule', x1-92, yOf(1)-6);
+  if(hist.length<1) return;
+  const n=hist.length, step=(x1-x0)/Math.max(n-1,1);
+  [['w₁','#2563eb',0],['w₂','#dc2626',1]].forEach(([lbl,col,k])=>{
+    ctx.strokeStyle=col; ctx.lineWidth=2; ctx.beginPath();
+    hist.forEach((w,i)=>{const x=x0+i*step,y=yOf(w[k]); i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
+    ctx.stroke(); ctx.fillStyle=col; ctx.fillText(lbl, x1+4, yOf(hist[n-1][k]));
+  });
+}
+$('add').onclick=()=>{
+  for(let k=0;k<10;k++){
+    const x1=Math.floor(Math.random()*50), x2=Math.floor(Math.random()*50);
+    X.push([x1,x2]); Y.push(x1+x2);
+  }
+  refresh();
+};
+$('reset').onclick=()=>{X=[];Y=[];hist=[];$('out').textContent='';refresh();};
+$('go').onclick=()=>{
+  const w=fit(), a=+$('a').value||0, b=+$('b').value||0;
+  $('out').textContent = w? `Machine says: ${(w[0]*a+w[1]*b).toFixed(1)}` : 'Teach it first!';
+};
+refresh();
+</script>
+</body>
+</html>
