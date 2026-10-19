@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mixed Variables Splitter — Day 33</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+h1{color:#fff;font-size:22px}
+.tabs{display:flex;gap:8px;margin:14px 0}
+.tab{padding:10px 18px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;cursor:pointer}
+.tab.active{background:#0284c7;border-color:#38bdf8;font-weight:700}
+.panel{background:#1e293b;border-radius:12px;padding:20px}
+table{border-collapse:collapse;margin:12px 0;font-size:14px}td,th{border:1px solid #334155;padding:8px 16px;text-align:center}
+th{background:#0b1220;color:#38bdf8}
+.new{color:#34d399;font-weight:700}.nan{color:#f87171}
+.arr{color:#38bdf8;font-size:22px;font-weight:800;margin:0 8px}
+pre{background:#0b1220;padding:12px;border-radius:8px;color:#a5b4fc;font-size:12.5px;overflow-x:auto}
+input{background:#0b1220;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px 12px;font-size:15px;width:120px}
+button{background:#0284c7;color:#fff;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;font-weight:700;margin-left:8px}
+.flow{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:12px 0}
+</style></head><body>
+<h1>🎯 Handling Mixed Variables — split, don't drop</h1>
+<p style="color:#94a3b8">Mixed data reaches you in two patterns. Same fix: split into a numeric column + a categorical column.</p>
+<div class="tabs"><button class="tab active" onclick="show(0,this)">Pattern 1 — fused cell (C85)</button>
+<button class="tab" onclick="show(1,this)">Pattern 2 — mixed down the column</button></div>
+<div class="panel" id="p"></div>
+<script>
+function show(i,el){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');
+const p=document.getElementById('p');
+if(i===0){p.innerHTML=`<h2 style="color:#38bdf8">Fused cell: category + number in one cell</h2>
+<p style="font-size:14px">Titanic <b>cabin</b>: C85, B28, E101… the letter is the deck, the number is the cabin. Try your own:</p>
+<div><input id="vin" value="C85" maxlength="8"><button onclick="split1()">split it</button></div>
+<div class="flow"><table><tr><th>cabin (before)</th></tr><tr><td id="v0">C85</td></tr></table>
+<span class="arr">→</span>
+<table><tr><th class="new">cabin_cat</th><th class="new">cabin_num</th></tr><tr><td class="new" id="v1">C</td><td class="new" id="v2">85</td></tr></table></div>
+<pre>df['cabin_num'] = pd.to_numeric(df['cabin'].str.extract(r'(\\d+)')[0], errors='coerce')
+df['cabin_cat'] = df['cabin'].str.extract(r'([A-Za-z]+)')[0]
+# fill NaNs: 0 for numbers, 'missing' label for categories</pre>
+<p style="font-size:13px;color:#94a3b8">Hundreds of "unique" cabins collapse into ~8 decks × numbers — now encodable and plottable.</p>`;
+window.split1=()=>{const v=document.getElementById('vin').value||"C85";
+const num=(v.match(/\d+/)||["—"])[0],cat=(v.match(/[A-Za-z]+/)||["—"])[0];
+document.getElementById('v0').textContent=v;document.getElementById('v1').textContent=cat;document.getElementById('v2').textContent=num;};}
+else{p.innerHTML=`<h2 style="color:#38bdf8">Mixed down the column: numbers and labels in one column</h2>
+<p style="font-size:14px">A passenger-count column: 2, 3, <b>alone</b>, 4… <code style="background:#0b1220;color:#a5b4fc;padding:2px 8px;border-radius:6px">pd.to_numeric(errors='coerce')</code> splits it:</p>
+<div class="flow"><table><tr><th>number (before)</th></tr><tr><td>2</td></tr><tr><td>3</td></tr><tr><td>alone</td></tr><tr><td>4</td></tr></table>
+<span class="arr">→</span>
+<table><tr><th class="new">num</th><th class="new">num_cat</th></tr>
+<tr><td class="new">2</td><td class="nan">NaN</td></tr>
+<tr><td class="new">3</td><td class="nan">NaN</td></tr>
+<tr><td class="nan">NaN→0</td><td class="new">alone</td></tr>
+<tr><td class="new">4</td><td class="nan">NaN</td></tr></table></div>
+<pre>num = pd.to_numeric(df['number'], errors='coerce')  # 'alone' → NaN
+df['num'] = num.fillna(0)            # 0 = "no companions counted"
+df['num_cat'] = df['number'].mask(num.notna())   # keep the label where it appeared</pre>
+<p style="font-size:13px;color:#94a3b8">Each row keeps its value in the matching column, NaN in the other — then impute deliberately (0 / 'missing').</p>`;}}
+show(0,document.querySelector('.tab'));
+</script></body></html>

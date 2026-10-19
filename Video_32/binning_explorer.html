@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Binning Explorer — Day 32</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+h1{color:#fff;font-size:22px}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+button{padding:9px 16px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;cursor:pointer;font-weight:600}
+button.active{background:#0284c7;border-color:#38bdf8}
+canvas{background:#1e293b;border-radius:12px;max-width:100%}
+.card{background:#1e293b;border-radius:12px;padding:16px;margin:14px 0}
+label{color:#94a3b8;font-size:14px}input[type=range]{width:220px;vertical-align:middle}
+pre{background:#0b1220;padding:12px;border-radius:8px;color:#a5b4fc;font-size:12.5px;overflow-x:auto}
+table{border-collapse:collapse;font-size:13px;margin:8px 0}td,th{border:1px solid #334155;padding:5px 12px}th{color:#38bdf8;background:#0b1220}
+</style></head><body>
+<h1>🎯 Binning Explorer — numbers → categories</h1>
+<p style="color:#94a3b8">Fare-like skewed values. Pick a strategy and bin count — watch the cut points move.</p>
+<div class="btns" id="strats"></div>
+<div><label>bins k: <b id="kv" style="color:#38bdf8">5</b></label>
+<input type="range" min="2" max="12" value="5" oninput="setK(+this.value)"></div>
+<canvas id="cv" width="640" height="260"></canvas>
+<div class="card"><h2 style="color:#38bdf8;margin-top:0;font-size:16px" id="stitle"></h2>
+<p id="sdesc" style="font-size:14px;color:#cbd5e1"></p><div id="edges"></div>
+<pre>from sklearn.preprocessing import KBinsDiscretizer
+binner = KBinsDiscretizer(n_bins=<span id="pk">5</span>, encode='ordinal', strategy='<span id="ps">quantile</span>')
+X_binned = binner.fit_transform(X[['Fare']])</pre></div>
+<script>
+let s=11;const rnd=()=>{s=(s*1103515245+12345)&0x7fffffff;return s/0x7fffffff;};
+const d=[];for(let i=0;i<3000;i++)d.push(Math.pow(rnd(),2.5)*500+5);
+let strat="quantile",K=5;
+const desc={uniform:["Equal-width","w = (max − min) / k — every bin equally wide. Simple, handles outliers, but leaves the shape unchanged."],
+quantile:["Equal-frequency (recommended)","cuts at percentiles: every bin holds ~equal rows. Widths differ — absorbs outliers AND evens out the spread."],
+kmeans:["KMeans","1-D clustering: dense groups become bins, centroids become bin values. Best when data has natural gaps."]};
+function edges(strat,k){const sd=[...d].sort((a,b)=>a-b),mn=sd[0],mx=sd[sd.length-1],e=[];
+if(strat==="uniform")for(let i=0;i<=k;i++)e.push(mn+(mx-mn)*i/k);
+else if(strat==="quantile")for(let i=0;i<=k;i++)e.push(sd[Math.min(sd.length-1,Math.floor(sd.length*i/k))]);
+else{let cs=[];for(let i=0;i<k;i++)cs.push(mn+(mx-mn)*(i+0.5)/k);
+for(let it=0;it<30;it++){const asg=sd.map(x=>{let b=0,bd=1e18;cs.forEach((c,j)=>{const dd=Math.abs(x-c);if(dd<bd){bd=dd;b=j;}});return b;});
+const nc=cs.map((_,j)=>{const pts=sd.filter((_,i)=>asg[i]===j);return pts.length?pts.reduce((s,x)=>s+x,0)/pts.length:cs[j];});
+if(nc.every((c,j)=>Math.abs(c-cs[j])<1e-6))break;cs=nc;}
+e=[mn];const srt=[...cs].sort((a,b)=>a-b);for(let i=0;i<k-1;i++)e.push((srt[i]+srt[i+1])/2);e.push(mx);}
+return e;}
+function draw(){const cv=document.getElementById('cv'),ctx=cv.getContext('2d');ctx.clearRect(0,0,640,260);
+const mn=Math.min(...d),mx=Math.max(...d),B=60,c=new Array(B).fill(0);
+d.forEach(x=>c[Math.min(B-1,Math.floor((x-mn)/(mx-mn)*B))]++);
+const cm=Math.max(...c);
+for(let i=0;i<60;i++){const h=c[i]/cm*150;ctx.fillStyle="#38bdf8";ctx.fillRect(10+i*10.3,190-h,8.5,h);}
+const e=edges(strat,K);
+e.forEach(v=>{const x=10+(v-mn)/(mx-mn)*618;ctx.strokeStyle="#f87171";ctx.lineWidth=2;
+ctx.beginPath();ctx.moveTo(x,20);ctx.lineTo(x,195);ctx.stroke();});
+document.getElementById('stitle').textContent=desc[strat][0];
+document.getElementById('sdesc').textContent=desc[strat][1];
+document.getElementById('edges').innerHTML="<table><tr><th>bin</th>"+Array.from({length:K},(_,i)=>"<td>"+i+"</td>").join("")+"</tr><tr><th>range</th>"+
+e.slice(0,-1).map((v,i)=>"<td>"+v.toFixed(0)+"–"+e[i+1].toFixed(0)+"</td>").join("")+"</tr></table>";
+document.getElementById('pk').textContent=K;document.getElementById('ps').textContent=strat;}
+const bs=document.getElementById('strats');
+Object.keys(desc).forEach((k,i)=>{const b=document.createElement('button');b.textContent=desc[k][0];b.className=i===1?"active":"";
+b.onclick=()=>{document.querySelectorAll('#strats button').forEach(x=>x.classList.remove('active'));b.classList.add('active');strat=k;draw();};bs.appendChild(b);});
+function setK(v){K=v;document.getElementById('kv').textContent=v;draw();}
+draw();
+</script></body></html>

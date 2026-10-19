@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ML Pipelines — Day 29</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+h1{color:#fff;font-size:22px}
+.chain{display:flex;align-items:stretch;gap:6px;overflow-x:auto;padding:10px 0}
+.node{background:#1e293b;border:2px solid #334155;border-radius:10px;padding:12px 14px;min-width:120px;text-align:center;cursor:pointer;transition:.2s}
+.node.active{border-color:#38bdf8;background:#0c4a6e}
+.node .t{font-weight:700;color:#fff;font-size:14px}.node .s{color:#94a3b8;font-size:12px}
+.arr{align-self:center;color:#38bdf8;font-size:22px;font-weight:800}
+.card{background:#1e293b;border-radius:12px;padding:18px;margin:14px 0}
+pre{background:#0b1220;padding:12px;border-radius:8px;color:#a5b4fc;font-size:12.5px;overflow-x:auto}
+.code{font-family:ui-monospace,monospace}
+.quiz{margin:10px 0}.opt{background:#0b1220;border:1px solid #334155;border-radius:8px;padding:8px 14px;margin:6px 0;cursor:pointer;font-size:14px}
+.opt.right{border-color:#34d399;background:#064e3b}.opt.wrong{border-color:#f87171;background:#451a1a}
+#qmsg{font-weight:700;margin-top:8px}
+</style></head><body>
+<h1>🎯 ML Pipeline — one object, fit to predict</h1>
+<p style="color:#94a3b8">Click each step to see what it does to the Titanic data. Without a pipeline you'd redo every step by hand — on train, test, and every new prediction.</p>
+<div class="chain" id="chain"></div>
+<div class="card"><h2 style="color:#38bdf8;margin-top:0" id="dTitle"></h2><p id="dBody" style="font-size:14px"></p><pre class="code" id="dCode"></pre></div>
+<div class="card"><h2 style="color:#38bdf8;margin-top:0">Pop quiz — GridSearchCV inside a pipeline</h2>
+<p style="font-size:14px">To tune <b>max_depth</b> of the classifier step named <b>'clf'</b>, the param grid key is…</p>
+<div class="quiz">
+<div class="opt" onclick="q(false,this)">max_depth</div>
+<div class="opt" onclick="q(false,this)">clf.max_depth</div>
+<div class="opt" onclick="q(true,this)">clf__max_depth</div>
+</div><div id="qmsg"></div>
+<pre class="code">pipe = Pipeline([('trf1', impute), ('trf2', encode), ('clf', DecisionTreeClassifier())])
+cross_val_score(pipe, X, y, cv=5)          # re-fits everything per fold ✅
+pickle.dump(pipe, open('pipe.pkl','wb'))   # ONE artifact to production ✅</pre></div>
+<script>
+const steps=[
+["🧹","impute","SimpleImputer","mean for Age · most-frequent for Embarked","impute = ColumnTransformer([\n  ('mean_imp', SimpleImputer(strategy='mean'), [2]),\n  ('freq_imp', SimpleImputer(strategy='most_frequent'), [6])\n], remainder='passthrough')"],
+["🔢","encode","OneHotEncoder","Sex & Embarked → 0/1 columns; handle_unknown='ignore'","encode = ColumnTransformer([\n  ('ohe', OneHotEncoder(sparse_output=False,\n                          handle_unknown='ignore'), [1, 6])\n], remainder='passthrough')"],
+["📏","scale","MinMaxScaler","numeric columns → [0, 1] range","scale = ColumnTransformer([\n  ('mm', MinMaxScaler(), num_cols)], remainder='passthrough')"],
+["🎯","select","SelectKBest","keep top-5 features (chi2 scores)","select = SelectKBest(score_func=chi2, k=5)"],
+["🌳","clf","DecisionTreeClassifier","the model — final step","clf = DecisionTreeClassifier()"],
+["📦","deploy","pickle","whole pipeline → ONE file; production just loads & predicts","pipe.fit(X_train, y_train)\npickle.dump(pipe, open('pipe.pkl','wb'))"]];
+const chain=document.getElementById('chain');
+steps.forEach((s,i)=>{const d=document.createElement('div');d.className='node'+(i===0?' active':'');
+d.innerHTML="<div style='font-size:24px'>"+s[0]+"</div><div class='t'>"+s[1]+"</div><div class='s'>"+s[2]+"</div>";
+d.onclick=()=>pick(i);chain.appendChild(d);
+if(i<steps.length-1){const a=document.createElement('div');a.className='arr';a.textContent='→';chain.appendChild(a);}});
+function pick(i){document.querySelectorAll('.node').forEach((n,j)=>n.classList.toggle('active',j===i));
+const s=steps[i];document.getElementById('dTitle').textContent=s[0]+" "+s[1]+" — "+s[2];
+document.getElementById('dBody').textContent=s[3];document.getElementById('dCode').textContent=s[4];}
+pick(0);
+function q(ok,el){document.querySelectorAll('.opt').forEach(o=>{o.classList.remove('right','wrong')});
+el.classList.add(ok?'right':'wrong');
+document.getElementById('qmsg').textContent=ok?"✅ step__param — the double-underscore convention!":"❌ try again";
+document.getElementById('qmsg').style.color=ok?"#34d399":"#f87171";}
+</script></body></html>

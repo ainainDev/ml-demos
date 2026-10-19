@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Power Transformer Explorer — Day 31</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+h1{color:#fff;font-size:22px}
+.tabs{display:flex;gap:8px;margin:14px 0}
+.tab{padding:10px 18px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;cursor:pointer}
+.tab.active{background:#0284c7;border-color:#38bdf8;font-weight:700}
+canvas{background:#1e293b;border-radius:12px;max-width:100%}
+.card{background:#1e293b;border-radius:12px;padding:16px;margin:14px 0}
+label{color:#94a3b8;font-size:14px}input[type=range]{width:280px;vertical-align:middle}
+.big{font-size:26px;font-weight:800;color:#38bdf8}
+code{background:#0b1220;color:#a5b4fc;padding:2px 8px;border-radius:6px;font-size:13px}
+pre{background:#0b1220;padding:12px;border-radius:8px;color:#a5b4fc;font-size:12.5px;overflow-x:auto}
+.good{color:#34d399}.bad{color:#f87171}
+</style></head><body>
+<h1>🎯 PowerTransformer — Box-Cox vs Yeo-Johnson</h1>
+<p style="color:#94a3b8">Drag λ and watch a skewed column morph toward normal. <code>λ = 0</code> is exactly the log transform.</p>
+<div class="tabs"><button class="tab active" onclick="mode('pos',this)">Box-Cox — positive data</button>
+<button class="tab" onclick="mode('neg',this)">Yeo-Johnson — with negatives</button></div>
+<div><label>λ (lambda): <span class="big" id="lv">0.2</span></label>
+<input type="range" min="-2" max="2" step="0.1" value="0.2" oninput="lam(+this.value)"></div>
+<canvas id="cv" width="640" height="300"></canvas>
+<div class="card">
+<div style="font-size:15px">skew before: <b class="bad" id="s0">—</b> → after: <b id="s1">—</b> <span id="verdict"></span></div>
+<p id="why" style="font-size:14px;color:#cbd5e1"></p>
+<pre>from sklearn.preprocessing import PowerTransformer
+pt = PowerTransformer(method='box-cox', standardize=True)  # or method='yeo-johnson' (default)
+X_t = pt.fit_transform(X)   # best λ per column stored in pt.lambdas_</pre>
+</div>
+<script>
+let s=7;const rnd=()=>{s=(s*1103515245+12345)&0x7fffffff;return s/0x7fffffff;};
+const pos=[];for(let i=0;i<4000;i++)pos.push(1+Math.pow(rnd(),2.5)*60);
+const neg=[];for(let i=0;i<4000;i++)neg.push(Math.pow(rnd(),2.5)*60-20);
+let M='pos',L=0.2;
+const boxcox=(x,l)=>Math.abs(l)<1e-9?Math.log(x):(Math.pow(x,l)-1)/l;
+const yeoj=(x,l)=>{if(x>=0)return Math.abs(l)<1e-9?Math.log(x+1):(Math.pow(x+1,l)-1)/l;
+return Math.abs(l-2)<1e-9?-Math.log(-x+1):-((Math.pow(-x+1,2-l)-1)/(2-l));};
+const skew=a=>{const m=a.reduce((s,x)=>s+x,0)/a.length,sd=Math.sqrt(a.reduce((s,x)=>s+(x-m)**2,0)/a.length);
+return (a.reduce((s,x)=>s+((x-m)/sd)**3,0)/a.length).toFixed(2);};
+function draw(){const d=M==='pos'?pos:neg,f=M==='pos'?boxcox:yeoj,tr=d.map(x=>f(x,L));
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');ctx.clearRect(0,0,640,300);
+[["before",d,"#64748b",0],["after (λ="+L+")",tr,"#34d399",150]].forEach(([lab,a,col,y0])=>{
+ctx.fillStyle="#94a3b8";ctx.font="13px system-ui";ctx.fillText(lab,10,y0+18);
+const mn=Math.min(...a),mx=Math.max(...a),B=50,c=new Array(B).fill(0);
+a.forEach(x=>c[Math.min(B-1,Math.floor((x-mn)/(mx-mn)*B))]++);
+const cm=Math.max(...c);
+for(let i=0;i<50;i++){const h=c[i]/cm*100;ctx.fillStyle=col;ctx.fillRect(14+i*12,y0+128-h,10,h);}});
+const a=skew(d),b=skew(tr);document.getElementById('s0').textContent=a;
+const e=document.getElementById('s1');e.textContent=b;e.className=Math.abs(+b)<Math.abs(+a)?"good":"bad";
+document.getElementById('verdict').textContent=Math.abs(+b)<Math.abs(+a)?"✅ more Gaussian-like":"❌ worse";
+document.getElementById('verdict').style.color=Math.abs(+b)<Math.abs(+a)?"#34d399":"#f87171";
+document.getElementById('why').innerHTML=M==='pos'
+?"<b>Box-Cox</b> y = (x<sup>λ</sup>−1)/λ, y = ln(x) when λ=0. Strictly positive x only — real sklearn picks the best λ by maximum likelihood (e.g. cement ≈ 0.17). In the video it lifted LinearRegression R² from 0.62 → 0.68."
+:"<b>Yeo-Johnson</b> is the piecewise extension that also handles zeros and negatives — the default method in sklearn's PowerTransformer. Try λ near 0: behaves like log.";}
+function lam(v){L=v;document.getElementById('lv').textContent=v.toFixed(1);draw();}
+function mode(m,el){M=m;document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');draw();}
+draw();
+</script></body></html>

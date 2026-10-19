@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Math Transforms Explorer — Day 30</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+h1{color:#fff;font-size:22px}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
+button{padding:9px 16px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;cursor:pointer;font-weight:600}
+button.active{background:#0284c7;border-color:#38bdf8}
+canvas{background:#1e293b;border-radius:12px;max-width:100%}
+.card{background:#1e293b;border-radius:12px;padding:16px;margin:14px 0}
+code{background:#0b1220;color:#a5b4fc;padding:2px 8px;border-radius:6px;font-size:13px}
+.stat{font-size:15px;margin:6px 0}.good{color:#34d399}.bad{color:#f87171}
+pre{background:#0b1220;padding:12px;border-radius:8px;color:#a5b4fc;font-size:12.5px;overflow-x:auto}
+</style></head><body>
+<h1>🎯 FunctionTransformer — fix the skew</h1>
+<p style="color:#94a3b8">Skewed feature (like Titanic Fare). Pick a transform and watch the distribution — linear models ❤️ normality.</p>
+<div class="btns" id="btns"></div>
+<canvas id="cv" width="640" height="300"></canvas>
+<div class="card">
+<div class="stat">skew before: <b class="bad" id="s0">—</b> → skew after: <b id="s1">—</b> <span id="verdict"></span></div>
+<p id="why" style="font-size:14px;color:#cbd5e1"></p>
+<pre id="code"></pre>
+</div>
+<script>
+const N=4000,data=[];let s=42;const rnd=()=>{s=(s*1103515245+12345)&0x7fffffff;return s/0x7fffffff;};
+for(let i=0;i<N;i++){data.push(5+Math.pow(rnd(),3)*495);} // right-skewed like Fare
+const T={
+none:{f:x=>x,label:"x' = x",why:"Baseline — long right tail. Linear/logistic regression assume symmetric, bell-ish features, so this shape hurts them.",code:""},
+log1p:{f:x=>Math.log(1+x),label:"x' = log(1+x)",why:"Log compresses the tail: 1, 10, 100, 1000 → evenly spaced. np.log1p is the zero-safe version. Best for right-skewed positive data.",code:"from sklearn.preprocessing import FunctionTransformer\ntrf = FunctionTransformer(func=np.log1p)\nX_t = trf.fit_transform(X[['Fare']])"},
+recip:{f:x=>1/x,label:"x' = 1/x",why:"Reciprocal shrinks huge values hard — but flips their order and explodes near zero. Use with care.",code:"trf = FunctionTransformer(func=np.reciprocal)"},
+sqrt:{f:x=>Math.sqrt(x),label:"x' = √x",why:"Square root is a gentler correction than log — same family, milder effect.",code:"trf = FunctionTransformer(func=np.sqrt)"},
+sq:{f:x=>x*x/500,label:"x' = x²",why:"Square stretches the tail — for LEFT-skewed data, not right. Here it makes things worse (see the skew).",code:"trf = FunctionTransformer(func=np.square)"}};
+const skew=a=>{const m=a.reduce((s,x)=>s+x,0)/a.length;const sd=Math.sqrt(a.reduce((s,x)=>s+(x-m)**2,0)/a.length);return (a.reduce((s,x)=>s+((x-m)/sd)**3,0)/a.length).toFixed(2);};
+function hist(a,bin){const mn=Math.min(...a),mx=Math.max(...a),B=50,c=new Array(B).fill(0);
+a.forEach(x=>{c[Math.min(B-1,Math.floor((x-mn)/(mx-mn)*B))]++;});return c;}
+function draw(name){const t=T[name],tr=data.map(t.f);
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');ctx.clearRect(0,0,640,300);
+[["before",data,"#64748b",0],["after",tr,"#38bdf8",150]].forEach(([lab,a,col,y0])=>{
+ctx.fillStyle="#94a3b8";ctx.font="13px system-ui";ctx.fillText(lab+"  ("+t.label+")",10,y0+18);
+const c=hist(a),mx=Math.max(...c);
+for(let i=0;i<50;i++){const h=c[i]/mx*100;ctx.fillStyle=col;ctx.fillRect(14+i*12,y0+128-h,10,h);}});
+const s0=skew(data),s1=skew(tr);
+document.getElementById('s0').textContent=s0;const e=document.getElementById('s1');e.textContent=s1;
+e.className=Math.abs(+s1)<Math.abs(+s0)?"good":"bad";
+document.getElementById('verdict').textContent=Math.abs(+s1)<Math.abs(+s0)?"✅ closer to normal":"❌ more skewed";
+document.getElementById('why').textContent=t.why;
+document.getElementById('code').textContent=t.code||"X_t = X  # no transform";};
+const bb=document.getElementById('btns');
+Object.keys(T).forEach((k,i)=>{const b=document.createElement('button');b.textContent=k==="none"?"none":T[k].label;b.className=i===0?"active":"";
+b.onclick=()=>{document.querySelectorAll('#btns button').forEach(x=>x.classList.remove('active'));b.classList.add('active');draw(k);};bb.appendChild(b);});
+draw("none");
+</script></body></html>

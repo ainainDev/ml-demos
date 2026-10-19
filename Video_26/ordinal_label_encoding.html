@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ordinal vs Label Encoding — Day 26</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+h1{color:#fff;font-size:22px}h2{color:#38bdf8;font-size:17px}
+.tabs{display:flex;gap:8px;margin:18px 0}
+.tab{padding:10px 18px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;cursor:pointer}
+.tab.active{background:#0284c7;border-color:#38bdf8;font-weight:700}
+.panel{background:#1e293b;border-radius:12px;padding:20px;margin-top:8px;min-height:260px}
+.row{display:flex;align-items:center;gap:12px;margin:8px 0;flex-wrap:wrap}
+.cat{padding:6px 14px;border-radius:20px;background:#334155;cursor:pointer;border:2px solid transparent}
+.cat.sel{border-color:#38bdf8;background:#0c4a6e;font-weight:700}
+.arrow{color:#94a3b8;font-size:20px}
+.num{font-size:22px;font-weight:800;color:#34d399;min-width:34px;text-align:center}
+.code{font-family:ui-monospace,monospace;background:#0b1220;padding:10px 14px;border-radius:8px;color:#a5b4fc;display:inline-block;margin-top:10px}
+.warn{background:#451a1a;border:1px solid #f87171;color:#fecaca;padding:12px 16px;border-radius:10px;margin-top:12px}
+table{border-collapse:collapse;margin:10px 0}td,th{border:1px solid #334155;padding:6px 12px;font-size:14px}
+th{background:#0b1220;color:#38bdf8}
+select{background:#0b1220;color:#e2e8f0;padding:6px 10px;border-radius:6px;border:1px solid #334155}
+</style></head><body>
+<h1>🎯 Ordinal Encoding vs Label Encoding</h1>
+<p style="color:#94a3b8">Both turn categories into numbers — but on <b>different columns, for different reasons</b>. Click a category to see its code.</p>
+<div class="tabs">
+<button class="tab active" onclick="show(0)">Ordinal → input X</button>
+<button class="tab" onclick="show(1)">Label → target y</button>
+<button class="tab" onclick="show(2)">⚠️ Common mistake</button>
+</div>
+<div class="panel" id="panel"></div>
+<script>
+const data=[
+{title:"Ordinal Encoding — ordered input column (Education)",rows:[["High School",0],["Under Graduate",1],["Post Graduate",2]],
+code:"oe = OrdinalEncoder(categories=[['High School','UG','PG']])\nX = oe.fit_transform(X_train)",
+note:"Use when the categories have a real rank: PG &gt; UG &gt; High School. You <b>tell</b> the encoder the order; it preserves it."},
+{title:"Label Encoding — the target column (Purchased)",rows:[["No",0],["Yes",1]],
+code:"le = LabelEncoder()\ny = le.fit_transform(y_train)   # target labels, not features",
+note:"Only for the <b>output</b> column y in classification. The 0/1 mapping is arbitrary — it carries no rank."},
+{title:"⚠️ Misusing LabelEncoder on nominal inputs (gender)",rows:[["female",0],["male",1]],
+code:"le.fit_transform(df['gender'])   # ❌ DON'T — for target only",
+warn:"female→0, male→1 <b>falsely implies</b> male &gt; female to the model. For nominal inputs use one-hot encoding (Day 27)."}];
+function show(i){document.querySelectorAll('.tab').forEach((t,j)=>t.classList.toggle('active',i===j));
+const d=data[i];let h="<h2>"+d.title+"</h2><div class='row'>";
+d.rows.forEach(r=>{h+="<span class='cat' onclick=\"this.classList.toggle('sel')\">"+r[0]+"</span><span class='arrow'>→</span><span class='num'>"+r[1]+"</span>"+(d.rows.indexOf(r)<d.rows.length-1?"<span class='arrow'>&nbsp;·&nbsp;</span>":"");});
+h+="</div><p>"+(d.warn||d.note)+"</p><div class='code'><pre style='margin:0'>"+d.code+"</pre></div>";
+if(d.warn)h+="<div class='warn'>"+d.warn+"</div>";
+document.getElementById('panel').innerHTML=h;}
+show(0);
+</script></body></html>

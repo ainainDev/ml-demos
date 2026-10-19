@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>One-Hot Encoding Explorer — Day 27</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+h1{color:#fff;font-size:22px}
+.card{background:#1e293b;border-radius:12px;padding:18px;margin:14px 0}
+table{border-collapse:collapse;margin:10px 0;font-size:14px}td,th{border:1px solid #334155;padding:7px 14px;text-align:center}
+th{background:#0b1220;color:#38bdf8}td.one{background:#065f46;color:#fff;font-weight:800}td.zero{color:#64748b}
+.code{font-family:ui-monospace,monospace;background:#0b1220;padding:10px 14px;border-radius:8px;color:#a5b4fc;margin:8px 0}
+.warn{background:#451a1a;border:1px solid #f87171;color:#fecaca;padding:12px 16px;border-radius:10px;margin-top:10px;font-size:14px}
+label{color:#94a3b8;font-size:14px}input[type=range]{width:220px}
+button{background:#0284c7;color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-weight:600}
+button.off{background:#334155}
+</style></head><body>
+<h1>🎯 One-Hot Encoding Explorer</h1>
+<p style="color:#94a3b8">Nominal categories (no order, e.g. fuel type) each become their own 0/1 column.</p>
+<div class="card">
+<h2 style="color:#38bdf8;margin-top:0">The dummy variable trap</h2>
+<div class="row"><button id="dropBtn" onclick="toggleDrop()">drop_first = False</button></div>
+<div id="oheTable"></div>
+<div class="code">yellow + blue + red = 1 &nbsp;(for every row) — linearly dependent!</div>
+<div id="trapMsg" class="warn" style="display:none">⚠️ Keep <b>n−1</b> of the n dummy columns. The dropped category is still readable as "all zeros" (here: red). Linear models need this; always use <b>drop_first=True</b>.</div>
+</div>
+<div class="card">
+<h2 style="color:#38bdf8;margin-top:0">High-cardinality fix: group rare brands into "uncommon"</h2>
+<label>keep only brands with at least <b id="freqVal">3</b> rows:</label>
+<input type="range" min="1" max="6" value="3" oninput="freq(+this.value)">
+<div id="brandTable"></div>
+<div class="code">df['brand'] = df['brand'].mask(df['brand'].map(df['brand'].value_counts()) &lt; <span id="f2">3</span>, 'uncommon')</div>
+</div>
+<script>
+let dropFirst=false;
+const fuels=["diesel","petrol","CNG"];
+function renderOHE(){let h="<table><tr><th>car</th>";
+fuels.forEach((f,i)=>{if(dropFirst&&i===0)return;h+="<th>fuel_"+f+"</th>";});h+="</tr>";
+fuels.forEach((f,r)=>{h+="<tr><td>"+f+"</td>";fuels.forEach((f2,c)=>{if(dropFirst&&c===0)return;h+="<td class='"+(r===c?"one":"zero")+"'>"+(r===c?1:0)+"</td>";});h+="</tr>";});
+h+="</table>";document.getElementById('oheTable').innerHTML=h;
+document.getElementById('dropBtn').textContent="drop_first = "+dropFirst;
+document.getElementById('dropBtn').className=dropFirst?"":"off";
+document.getElementById('trapMsg').style.display=dropFirst?"block":"none";}
+function toggleDrop(){dropFirst=!dropFirst;renderOHE();}
+const brands=["Maruti","Maruti","Maruti","Maruti","Hyundai","Hyundai","Hyundai","Tata","Tata","Kia","Ford","Jaguar"];
+function freq(n){document.getElementById('freqVal').textContent=n;document.getElementById('f2').textContent=n;
+const counts={};brands.forEach(b=>counts[b]=(counts[b]||0)+1);
+let h="<table><tr><th>row</th><th>brand</th><th>kept?</th></tr>";
+brands.forEach((b,i)=>{const kept=counts[b]>=n;h+="<tr><td>"+(i+1)+"</td><td>"+b+"</td><td style='color:"+(kept?"#34d399":"#f87171")+"'>"+(kept?b:"uncommon")+"</td></tr>";});
+h+="</table><p style='color:#94a3b8;font-size:13px'>"+Object.keys(counts).filter(k=>counts[k]>=n).length+" frequent categories kept, "+Object.keys(counts).filter(k=>counts[k]<n).length+" rare ones merged → "+(Object.keys(counts).filter(k=>counts[k]>=n).length+ (Object.keys(counts).some(k=>counts[k]<n)?1:0))+" one-hot columns instead of "+Object.keys(counts).length+".</p>";
+document.getElementById('brandTable').innerHTML=h;}
+renderOHE();freq(3);
+</script></body></html>

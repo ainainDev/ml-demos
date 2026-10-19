@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ColumnTransformer — Day 28</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+h1{color:#fff;font-size:22px}.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.card{background:#1e293b;border-radius:12px;padding:18px}
+.card h2{margin-top:0;font-size:17px}.aam h2{color:#f87171}.mentos h2{color:#34d399}
+pre{background:#0b1220;padding:12px;border-radius:8px;color:#a5b4fc;font-size:12.5px;overflow-x:auto}
+.step{padding:6px 0;color:#94a3b8;font-size:14px}.step.done{color:#34d399}
+button{background:#0284c7;color:#fff;border:none;border-radius:8px;padding:10px 22px;cursor:pointer;font-weight:700;font-size:15px}
+.out{background:#0b1220;border-radius:8px;padding:12px;font-family:ui-monospace,monospace;font-size:13px;color:#34d399;margin-top:10px;min-height:60px}
+table{border-collapse:collapse;font-size:13px;margin:8px 0}td,th{border:1px solid #334155;padding:5px 10px}th{color:#38bdf8;background:#0b1220}
+@media(max-width:800px){.cols{grid-template-columns:1fr}}
+</style></head><body>
+<h1>🎯 ColumnTransformer — "aam zindagi" vs "mentos zindagi"</h1>
+<p style="color:#94a3b8">One dataset, mixed column types. Do it by hand (left) or in one call (right).</p>
+<div class="cols">
+<div class="card aam"><h2>😓 aam zindagi — manual way</h2>
+<div class="step" id="s1">1️⃣ SimpleImputer on fever (missing values)</div>
+<div class="step" id="s2">2️⃣ OrdinalEncoder on cough (mild &lt; strong)</div>
+<div class="step" id="s3">3️⃣ OneHotEncoder(drop='first') on gender, city</div>
+<div class="step" id="s4">4️⃣ np.concatenate everything back together…</div>
+<div class="step" id="s5">5️⃣ …and repeat it ALL again for X_test 😩</div>
+<pre>X1 = SimpleImputer().fit_transform(X_train[['fever']])
+X2 = OrdinalEncoder(...).fit_transform(X_train[['cough']])
+X3 = OneHotEncoder(drop='first').fit_transform(X_train[['gender','city']])
+X_train_t = np.concatenate([X1, X2, X3, X_train[['age']]], axis=1)</pre>
+<button onclick="runManual()">▶ run manual steps</button>
+<div class="out" id="outA">click ▶ to watch the stitching</div></div>
+<div class="card mentos"><h2>😎 mentos zindagi — ColumnTransformer</h2>
+<div class="step">✅ declare each (name, transformer, columns) once</div>
+<div class="step">✅ remainder='passthrough' keeps <b>age</b> untouched</div>
+<div class="step">✅ one fit_transform on train, transform on test</div>
+<pre>from sklearn.compose import ColumnTransformer
+transformer = ColumnTransformer(
+  transformers=[
+    ('tm1', SimpleImputer(), ['fever']),
+    ('tm2', OrdinalEncoder(categories=[['mild','strong']]), ['cough']),
+    ('tm3', OneHotEncoder(drop='first'), ['gender','city'])],
+  remainder='passthrough')
+X_train_t = transformer.fit_transform(X_train)
+X_test_t  = transformer.transform(X_test)</pre>
+<button onclick="runCT()">▶ run transformer</button>
+<div class="out" id="outB">click ▶ to transform the same data</div></div>
+</div>
+<div class="card" style="margin-top:16px"><h2 style="color:#38bdf8;margin-top:0">Sample input rows</h2>
+<table><tr><th>age</th><th>gender</th><th>fever</th><th>cough</th><th>city</th></tr>
+<tr><td>25</td><td>male</td><td>101.2</td><td>mild</td><td>Delhi</td></tr>
+<tr><td>34</td><td>female</td><td>NaN</td><td>strong</td><td>Mumbai</td></tr>
+<tr><td>41</td><td>male</td><td>99.8</td><td>mild</td><td>Kolkata</td></tr></table>
+<p style="color:#94a3b8;font-size:13px">fever mean = 100.5 (imputed); gender_male kept after drop='first' (female dropped); city → 2 columns (Mumbai, Kolkata kept, Delhi dropped).</p></div>
+<script>
+const res=[["100.5","mild→0","gender_male: 1,0,1","city: [1,0],[0,1],[0,0]","25,34,41"],
+"row1: [101.2, 0, 1, 1, 0, 25]\nrow2: [100.5, 1, 0, 0, 1, 34]\nrow3: [99.8, 0, 1, 0, 0, 41]\n→ 6 columns, ready for the model ✅"];
+function runManual(){const ids=["s1","s2","s3","s4","s5"];let i=0;
+const t=setInterval(()=>{if(i>0)document.getElementById(ids[i-1]).classList.add('done');
+if(i>=ids.length){clearInterval(t);document.getElementById('outA').textContent=res[1];return;}i++;},450);
+document.getElementById('outA').textContent="running…";}
+function runCT(){document.getElementById('outB').textContent="fit_transform →\n"+res[1];}
+</script></body></html>
