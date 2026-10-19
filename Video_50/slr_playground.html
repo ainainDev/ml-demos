@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simple Linear Regression playground — Day 48</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 760px; margin: 24px auto; padding: 0 16px; line-height: 1.5; }
+  h2 { margin-bottom: 4px; } .sub { color: #64748b; margin-top: 0; }
+  .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; margin-right: 8px; }
+  button.ghost { background: #e2e8f0; color: #0f172a; }
+  canvas { width: 100%; height: 300px; border: 1px solid #e2e8f0; border-radius: 10px; }
+  .ctl { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  input[type=range] { width: 190px; }
+  .note { font-size: 13px; color: #64748b; }
+  .verdict { font-size: 15px; background: #f1f5f9; border-radius: 10px; padding: 10px 14px; margin: 8px 0; }
+  code { background: #f1f5f9; padding: 1px 5px; border-radius: 5px; }
+</style>
+</head>
+<body>
+<h2>📈 Simple Linear Regression playground</h2>
+<p class="sub">200 students' CGPA vs package (synthetic, placement.csv style). Drag the sliders to move the line; watch the error. Then let OLS find the best-fit line for you.</p>
+
+<div class="card">
+  <b>Your line: ŷ = <span id="mv">0.80</span>·x + <span id="bv">0.00</span></b>
+  <div class="ctl">
+    <label>slope m <input type="range" id="m" min="-1" max="2" step="0.01" value="0.8"></label><b id="mv2">0.80</b>
+    <label>intercept b <input type="range" id="b" min="-5" max="5" step="0.05" value="0"></label><b id="bv2">0.00</b>
+  </div>
+  <div class="ctl">
+    <button id="ols">⚡ Find best-fit line (OLS)</button>
+    <button id="worst" class="ghost">😈 Make it terrible</button>
+  </div>
+  <div class="verdict" id="verdict"></div>
+</div>
+
+<div class="card">
+  <b>The fit</b>
+  <p class="note"><span style="color:#2563eb">●</span> students &nbsp; <span style="color:#dc2626">─</span> your line &nbsp; <span style="color:#f59e0b">│</span> errors (residuals) &nbsp; <span style="color:#16a34a">─</span> OLS best-fit line</p>
+  <canvas id="plot" width="720" height="300"></canvas>
+  <p class="note">OLS found: m = <b id="om">—</b>, b = <b id="ob">—</b> (closed form: m = Σ(x−x̄)(y−ȳ) / Σ(x−x̄)², b = ȳ − m·x̄)</p>
+</div>
+
+<div class="card">
+  <b>Predict for a new student</b>
+  <div class="ctl">
+    <label>CGPA <input type="range" id="cgpa" min="5" max="10" step="0.01" value="9"></label><b id="cgpav">9.00</b>
+  </div>
+  <div class="verdict">Predicted package: <b id="pred">—</b> (using the OLS best-fit line)</div>
+</div>
+
+<script>
+let pts = [];
+for (let i = 0; i < 200; i++) {
+  let x = 5.5 + Math.random() * 4;
+  let y = 0.9 * x - 2.9 + (Math.random() + Math.random() + Math.random() - 1.5) * 1.1;
+  pts.push([x, y]);
+}
+// true OLS solution
+let n = pts.length, sx = 0, sy = 0;
+pts.forEach(p => { sx += p[0]; sy += p[1]; });
+let xm = sx / n, ym = sy / n, num = 0, den = 0;
+pts.forEach(p => { num += (p[0] - xm) * (p[1] - ym); den += (p[0] - xm) * (p[0] - xm); });
+let om = num / den, ob = ym - om * xm;
+document.getElementById('om').textContent = om.toFixed(3);
+document.getElementById('ob').textContent = ob.toFixed(3);
+
+const cv = document.getElementById('plot'), ctx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+function X(x) { return 40 + (x - 5) / 5.5 * (W - 60); }
+function Y(y) { return H - 30 - (y + 1) / 10 * (H - 60); }
+
+function mse(m, b) {
+  let s = 0; pts.forEach(p => { let e = p[1] - (m * p[0] + b); s += e * e; });
+  return s / n;
+}
+
+function draw() {
+  let m = parseFloat(document.getElementById('m').value);
+  let b = parseFloat(document.getElementById('b').value);
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1;
+  for (let g = 0; g <= 5; g++) { ctx.beginPath(); ctx.moveTo(40, 30 + g * (H - 60) / 5); ctx.lineTo(W - 20, 30 + g * (H - 60) / 5); ctx.stroke(); }
+  ctx.strokeStyle = '#64748b'; ctx.fillStyle = '#64748b'; ctx.font = '11px system-ui';
+  ctx.fillText('CGPA →', W - 70, H - 8); ctx.fillText('package (lpa)', 4, 18);
+  // residuals
+  ctx.strokeStyle = 'rgba(245,158,11,.55)'; ctx.lineWidth = 1;
+  pts.forEach(p => { ctx.beginPath(); ctx.moveTo(X(p[0]), Y(p[1])); ctx.lineTo(X(p[0]), Y(m * p[0] + b)); ctx.stroke(); });
+  // points
+  ctx.fillStyle = 'rgba(37,99,235,.6)';
+  pts.forEach(p => { ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 2.4, 0, 7); ctx.fill(); });
+  // OLS line
+  ctx.strokeStyle = '#16a34a'; ctx.lineWidth = 2; ctx.setLineDash([7, 5]);
+  ctx.beginPath(); ctx.moveTo(X(5), Y(om * 5 + ob)); ctx.lineTo(X(10.5), Y(om * 10.5 + ob)); ctx.stroke();
+  ctx.setLineDash([]);
+  // user line
+  ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(X(5), Y(m * 5 + b)); ctx.lineTo(X(10.5), Y(m * 10.5 + b)); ctx.stroke();
+  // readouts
+  document.getElementById('mv').textContent = m.toFixed(2);
+  document.getElementById('bv').textContent = b.toFixed(2);
+  document.getElementById('mv2').textContent = m.toFixed(2);
+  document.getElementById('bv2').textContent = b.toFixed(2);
+  let err = mse(m, b), best = mse(om, ob);
+  document.getElementById('verdict').innerHTML =
+    `Your MSE: <b>${err.toFixed(3)}</b> &nbsp;·&nbsp; OLS best MSE: <b>${best.toFixed(3)}</b>` +
+    (Math.abs(m - om) < 0.03 && Math.abs(b - ob) < 0.15
+      ? ` &nbsp;🎯 nailed it — you found the best-fit line!`
+      : ` &nbsp;try the ⚡ button to see the optimal line.`);
+  let c = parseFloat(document.getElementById('cgpa').value);
+  document.getElementById('pred').textContent = (om * c + ob).toFixed(2) + ' lpa';
+}
+
+['m', 'b', 'cgpa'].forEach(id => document.getElementById(id).addEventListener('input', e => {
+  if (id === 'cgpa') document.getElementById('cgpav').textContent = parseFloat(e.target.value).toFixed(2);
+  draw();
+}));
+document.getElementById('ols').onclick = () => {
+  document.getElementById('m').value = om; document.getElementById('b').value = ob; draw();
+};
+document.getElementById('worst').onclick = () => {
+  document.getElementById('m').value = -0.8; document.getElementById('b').value = 4; draw();
+};
+draw();
+</script>
+</body>
+</html>
