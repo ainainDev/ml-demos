@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Feature Splitting &amp; Construction (Day 45)</title>
+<style>
+  body { font-family:system-ui,-apple-system,sans-serif; background:#12141a; color:#e8eaf0;
+         margin:0; padding:20px; }
+  .card { max-width:860px; margin:0 auto; background:#1c1f28; border-radius:12px; padding:22px;
+          box-shadow:0 4px 18px rgba(0,0,0,.45); }
+  h1 { font-size:1.35rem; margin:0 0 6px; }
+  h2 { font-size:1.05rem; color:#9fb6e8; margin:22px 0 8px; }
+  .caption { color:#9aa3b5; font-size:.92rem; margin-bottom:8px; line-height:1.5; }
+  .panel { background:#14161d; border:1px solid #2c313d; border-radius:10px; padding:16px; margin-top:10px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  input[type=text] { flex:1; min-width:220px; background:#0e1015; border:1px solid #3a4050; color:#e8eaf0;
+                     border-radius:8px; padding:9px 12px; font-size:.95rem; }
+  button { background:#2a3040; border:1px solid #3a4050; color:#e8eaf0; border-radius:8px;
+           padding:8px 14px; cursor:pointer; font-size:.88rem; }
+  button:hover { background:#354052; }
+  button.go { background:#4f8cff; border-color:#4f8cff; font-weight:bold; }
+  button.go:hover { background:#3f76d6; }
+  .preset { font-size:.82rem; }
+  table { border-collapse:collapse; font-size:.9rem; margin-top:6px; width:100%; max-width:560px; }
+  th, td { border:1px solid #2c313d; padding:7px 10px; text-align:left; }
+  th { background:#0e1015; color:#9aa3b5; font-weight:600; }
+  td.hl { color:#7fd48a; font-weight:bold; }
+  .step { font-size:.88rem; color:#9aa3b5; margin:10px 0 4px; line-height:1.55; }
+  .step code { background:#0e1015; padding:2px 7px; border-radius:5px; color:#e8eaf0;
+               border:1px solid #2c313d; font-size:.85rem; }
+  canvas { width:100%; max-width:560px; height:auto; background:#0e1015; border-radius:8px;
+           border:1px solid #2c313d; margin-top:10px; }
+  .sliders label { display:block; font-size:.92rem; color:#c7cdd9; margin:12px 0 4px; }
+  input[type=range] { width:min(320px,90%); accent-color:#4f8cff; }
+  .sval { font-weight:bold; color:#4f8cff; }
+  .result { margin-top:14px; display:flex; gap:12px; flex-wrap:wrap; }
+  .box { background:#0e1015; border:1px solid #2c313d; border-radius:8px; padding:12px 18px; text-align:center; }
+  .box .k { font-size:.78rem; color:#9aa3b5; }
+  .box .v { font-size:1.4rem; font-weight:bold; color:#7fd48a; margin-top:2px; }
+  .explain { font-size:.88rem; color:#9aa3b5; margin-top:10px; line-height:1.55; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Feature Splitting &amp; Construction</h1>
+  <p class="caption"><b>What this shows:</b> two classic feature-engineering moves on Titanic-style data.
+  <b>Panel A</b> splits a raw passenger name to extract the <i>Title</i> &mdash; a compact feature that
+  predicts survival far better than the raw string. <b>Panel B</b> combines two weak counters into one
+  stronger feature: <i>family size</i> and <i>family type</i>.</p>
+
+  <!-- ============ PANEL A ============ -->
+  <h2>Panel A &mdash; Split: extract Title from Name</h2>
+  <div class="panel">
+    <div class="row">
+      <input type="text" id="nameIn" value="Braund, Mr. Owen Harris">
+      <button class="go" id="splitBtn">Split name</button>
+    </div>
+    <div class="row">
+      <button class="preset" data-name="Braund, Mr. Owen Harris">Mr</button>
+      <button class="preset" data-name="Cumings, Mrs. John Bradley (Florence Briggs Thayer)">Mrs</button>
+      <button class="preset" data-name="Heikkinen, Miss. Laina">Miss</button>
+      <button class="preset" data-name="Palsson, Master. Gosta Leonard">Master</button>
+      <button class="preset" data-name="Frauenthal, Dr. Henry William">Dr</button>
+    </div>
+    <div class="step" id="steps"></div>
+    <table>
+      <tr><th>Original column</th><th>Derived feature</th><th>Value</th></tr>
+      <tr><td>Name</td><td><b>Title</b></td><td class="hl" id="titleOut">&mdash;</td></tr>
+      <tr><td>Name</td><td>Surname</td><td id="surOut">&mdash;</td></tr>
+    </table>
+    <canvas id="surv" width="560" height="260"></canvas>
+    <p class="step">Survival rate by extracted Title (Titanic-style training data). The engineered
+    <code>Title</code> feature separates passengers far better than the raw name string ever could.</p>
+  </div>
+
+  <!-- ============ PANEL B ============ -->
+  <h2>Panel B &mdash; Construct: build family_size from SibSp + Parch</h2>
+  <div class="panel">
+    <div class="sliders">
+      <label>SibSp (siblings / spouses aboard):
+        <input type="range" id="sib" min="0" max="8" step="1" value="1"> <span class="sval" id="sibV">1</span></label>
+      <label>Parch (parents / children aboard):
+        <input type="range" id="par" min="0" max="6" step="1" value="0"> <span class="sval" id="parV">0</span></label>
+    </div>
+    <div class="result">
+      <div class="box"><div class="k">family_size = SibSp + Parch + 1</div><div class="v" id="fsOut">2</div></div>
+      <div class="box"><div class="k">family_type</div><div class="v" id="ftOut">small family</div></div>
+    </div>
+    <p class="explain">Two weak numeric counters become one meaningful feature. Family size
+    <b>alone = 1</b>, <b>small family = 2&ndash;4</b>, <b>large family = 5+</b> captures a pattern the raw
+    columns hide: people travelling alone and very large families survived at lower rates than small families.</p>
+  </div>
+</div>
+
+<script>
+// ---------- Panel A: title extraction ----------
+function extractTitle(name){
+  const before = name.split(',')[0].trim();              // surname
+  let title = null;
+  const after = name.split(',').slice(1).join(',').trim(); // everything after the comma
+  const m = after.match(/^([A-Za-z]+)\./);                // "Mr." , "Mrs." , ...
+  if(m) title = m[1];
+  return { surname: before, title: title || '(not found)' };
+}
+
+function doSplit(){
+  const name = document.getElementById('nameIn').value.trim();
+  const { surname, title } = extractTitle(name);
+  const stepHtml =
+    '1. Split on comma &rarr; <code>"' + escapeHtml(surname) + '"</code> and ' +
+    '<code>"' + escapeHtml(name.split(',').slice(1).join(',').trim()) + '"</code><br>' +
+    '2. Take the part after the comma, grab the word before the first dot &rarr; ' +
+    '<code>Title = ' + escapeHtml(title) + '</code>';
+  document.getElementById('steps').innerHTML = stepHtml;
+  document.getElementById('titleOut').textContent = title;
+  document.getElementById('surOut').textContent = surname;
+}
+function escapeHtml(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+document.getElementById('splitBtn').addEventListener('click', doSplit);
+document.querySelectorAll('.preset').forEach(b =>
+  b.addEventListener('click', () => { document.getElementById('nameIn').value = b.dataset.name; doSplit(); }));
+
+// ---------- survival-rate bar chart ----------
+const rates = [['Mrs',0.79],['Miss',0.70],['Master',0.58],['Mr',0.16]];
+function drawChart(){
+  const cv = document.getElementById('surv'), c = cv.getContext('2d');
+  const Wd = cv.width, Hd = cv.height, padL = 64, padB = 34, padT = 26;
+  c.clearRect(0,0,Wd,Hd);
+  const n = rates.length, slot = (Wd-padL-16)/n, bw = slot*0.55;
+  const cols = ['#7fd48a','#7fd48a','#e8c547','#e5484d'];
+  c.font = '11px system-ui'; c.textAlign = 'center';
+  rates.forEach((r,i) => {
+    const hgt = r[1]*(Hd-padB-padT);
+    const x0 = padL + i*slot + (slot-bw)/2, y0 = Hd-padB-hgt;
+    c.fillStyle = cols[i]; c.fillRect(x0, y0, bw, hgt);
+    c.fillStyle = '#e8eaf0'; c.fillText(r[1].toFixed(2), x0+bw/2, y0-8);
+    c.fillStyle = '#9aa3b5'; c.fillText(r[0], x0+bw/2, Hd-padB+16);
+  });
+  c.fillStyle = '#9aa3b5'; c.textAlign = 'left';
+  c.fillText('Survival rate', 8, 18);
+  c.strokeStyle = '#2c313d'; c.beginPath(); c.moveTo(padL, 10); c.lineTo(padL, Hd-padB); c.stroke();
+}
+
+// ---------- Panel B: family construction ----------
+function familyType(size){ return size===1 ? 'alone' : (size<=4 ? 'small family' : 'large family'); }
+function refreshFamily(){
+  const sib = +document.getElementById('sib').value;
+  const par = +document.getElementById('par').value;
+  const size = sib + par + 1;
+  document.getElementById('sibV').textContent = sib;
+  document.getElementById('parV').textContent = par;
+  document.getElementById('fsOut').textContent = size;
+  document.getElementById('ftOut').textContent = familyType(size);
+}
+document.getElementById('sib').addEventListener('input', refreshFamily);
+document.getElementById('par').addEventListener('input', refreshFamily);
+
+doSplit(); drawChart(); refreshFamily();
+</script>
+</body>
+</html>

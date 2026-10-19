@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IQR Boxplot Outlier Explorer (Day 43)</title>
+<style>
+  body { font-family:system-ui,-apple-system,sans-serif; background:#12141a; color:#e8eaf0;
+         margin:0; padding:20px; }
+  .card { max-width:780px; margin:0 auto; background:#1c1f28; border-radius:12px; padding:22px;
+          box-shadow:0 4px 18px rgba(0,0,0,.45); }
+  h1 { font-size:1.35rem; margin:0 0 6px; }
+  .caption { color:#9aa3b5; font-size:.92rem; margin-bottom:16px; line-height:1.5; }
+  .formula { background:#0e1015; border:1px solid #2c313d; border-radius:8px; padding:10px 14px;
+             font-size:1rem; text-align:center; margin-bottom:14px; line-height:1.7; }
+  .controls { display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:12px; }
+  label { font-size:.9rem; color:#c7cdd9; }
+  input[type=range] { width:200px; accent-color:#4f8cff; }
+  .mval { font-weight:bold; color:#4f8cff; }
+  .seg { display:flex; background:#0e1015; border:1px solid #2c313d; border-radius:8px; overflow:hidden; }
+  .seg button { background:transparent; border:0; color:#9aa3b5; padding:8px 16px; cursor:pointer; font-size:.9rem; }
+  .seg button.active { background:#4f8cff; color:#fff; font-weight:bold; }
+  canvas { width:100%; height:auto; background:#0e1015; border-radius:8px; border:1px solid #2c313d; }
+  .stats { display:flex; gap:16px; flex-wrap:wrap; margin-top:12px; font-size:.92rem; }
+  .stat b { color:#4f8cff; }
+  .treat { margin-top:14px; background:#0e1015; border:1px solid #2c313d; border-radius:8px; padding:14px; }
+  .treat h3 { margin:0 0 8px; font-size:1rem; }
+  .treat p { margin:6px 0; font-size:.9rem; color:#c7cdd9; line-height:1.5; }
+  #hist { margin-top:10px; }
+  .legend { display:flex; gap:18px; font-size:.85rem; color:#9aa3b5; margin-top:8px; flex-wrap:wrap; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>IQR Boxplot Outlier Explorer</h1>
+  <p class="caption"><b>What this shows:</b> the IQR method for spotting outliers in a skewed dataset
+  (placement exam marks, 0&ndash;100, with high-side outliers). Drag the multiplier slider to widen or
+  narrow the fences. Dashed lines are the lower and upper fences; red dots are outliers. Then compare
+  <b>trim</b> (drop outlier rows) vs <b>cap</b> (clip them to the fence) and see what each does to the data.</p>
+
+  <div class="formula">
+    IQR = Q3 &minus; Q1 &nbsp;&bull;&nbsp;
+    Lower fence = Q1 &minus; k&middot;IQR &nbsp;&bull;&nbsp;
+    Upper fence = Q3 + k&middot;IQR &nbsp;&bull;&nbsp; outlier = outside the fences
+  </div>
+
+  <div class="controls">
+    <label>Fence multiplier k: <input type="range" id="mult" min="0.5" max="3" step="0.1" value="1.5">
+      <span class="mval" id="mval">1.5</span></label>
+    <div class="seg" id="seg">
+      <button class="active" data-mode="trim">Trim (drop rows)</button>
+      <button data-mode="cap">Cap (clip to fence)</button>
+    </div>
+  </div>
+
+  <canvas id="box" width="740" height="340"></canvas>
+  <div class="legend">
+    <span><span class="dot" style="background:#4f8cff"></span>inside fences</span>
+    <span><span class="dot" style="background:#e5484d"></span>outlier</span>
+    <span><span class="dot" style="background:#8b93a7"></span>fences (dashed)</span>
+  </div>
+
+  <div class="stats">
+    <span class="stat">Q1 = <b id="sQ1"></b></span>
+    <span class="stat">Median = <b id="sMed"></b></span>
+    <span class="stat">Q3 = <b id="sQ3"></b></span>
+    <span class="stat">IQR = <b id="sIQR"></b></span>
+    <span class="stat">Lower fence = <b id="sLF"></b></span>
+    <span class="stat">Upper fence = <b id="sUF"></b></span>
+    <span class="stat">Outliers: <b id="sOut" style="color:#e5484d"></b></span>
+  </div>
+
+  <div class="treat">
+    <h3>After treatment: <span id="modeLabel" style="color:#4f8cff">Trim</span></h3>
+    <p id="treatText"></p>
+    <canvas id="hist" width="740" height="150"></canvas>
+  </div>
+</div>
+
+<script>
+// --- skewed marks dataset: bulk 30-80, high-side outliers near 100 ---
+function makeData(){
+  const a = [];
+  for(let i=0;i<260;i++){ const u=Math.random(); a.push(28 + 52*Math.pow(u,1.4)); } // left bulk, right tail
+  for(let i=0;i<26;i++) a.push(92 + Math.random()*8);  // injected high outliers
+  return a;
+}
+const data = makeData();
+const sorted = [...data].sort((a,b)=>a-b);
+const q = p => { const i=(sorted.length-1)*p, lo=Math.floor(i), hi=Math.ceil(i);
+                 return sorted[lo]+(sorted[hi]-sorted[lo])*(i-lo); };
+const Q1=q(0.25), MED=q(0.5), Q3=q(0.75), IQR=Q3-Q1;
+
+let k = 1.5, mode = 'trim';
+const boxCv = document.getElementById('box'), bx = boxCv.getContext('2d');
+const BW=boxCv.width, BH=boxCv.height, PAD={l:56,r:20,t:30,b:44};
+
+function fences(){ return { lf: Q1 - k*IQR, uf: Q3 + k*IQR }; }
+
+function drawBox(){
+  const {lf, uf} = fences();
+  const lo = Math.min(lf, Math.min(...data)) - 2, hi = Math.max(uf, Math.max(...data)) + 2;
+  const X = v => PAD.l + (v-lo)/(hi-lo)*(BW-PAD.l-PAD.r);
+  bx.clearRect(0,0,BW,BH);
+  const yc = BH/2 - 10, bh = 70;
+
+  // fences (dashed)
+  bx.strokeStyle = '#8b93a7'; bx.setLineDash([7,5]); bx.lineWidth = 1.5;
+  bx.beginPath(); bx.moveTo(X(lf), PAD.t); bx.lineTo(X(lf), BH-PAD.b); bx.stroke();
+  bx.beginPath(); bx.moveTo(X(uf), PAD.t); bx.lineTo(X(uf), BH-PAD.b); bx.stroke();
+  bx.setLineDash([]);
+  bx.fillStyle = '#8b93a7'; bx.font='11px system-ui'; bx.textAlign='center';
+  bx.fillText('Lower fence ' + lf.toFixed(1), X(lf), BH-12);
+  bx.fillText('Upper fence ' + uf.toFixed(1), X(uf), BH-12);
+
+  // whiskers to min/max inside fences
+  const inner = data.filter(v=>v>=lf && v<=uf);
+  const wlo = Math.min(...inner), whi = Math.max(...inner);
+  bx.strokeStyle = '#9aa3b5'; bx.lineWidth = 2;
+  bx.beginPath(); bx.moveTo(X(wlo), yc); bx.lineTo(X(Q1), yc); bx.stroke();
+  bx.beginPath(); bx.moveTo(X(Q3), yc); bx.lineTo(X(whi), yc); bx.stroke();
+  for(const v of [wlo, whi]){ bx.beginPath(); bx.moveTo(X(v), yc-bh/3); bx.lineTo(X(v), yc+bh/3); bx.stroke(); }
+
+  // box
+  bx.fillStyle = 'rgba(79,140,255,.30)';
+  bx.fillRect(X(Q1), yc-bh/2, X(Q3)-X(Q1), bh);
+  bx.strokeStyle = '#4f8cff'; bx.lineWidth = 2;
+  bx.strokeRect(X(Q1), yc-bh/2, X(Q3)-X(Q1), bh);
+  // median
+  bx.strokeStyle = '#fff'; bx.lineWidth = 2.5;
+  bx.beginPath(); bx.moveTo(X(MED), yc-bh/2); bx.lineTo(X(MED), yc+bh/2); bx.stroke();
+
+  // quartile labels
+  bx.fillStyle = '#c7cdd9'; bx.font = '11px system-ui';
+  bx.fillText('Q1 '+Q1.toFixed(1), X(Q1), yc-bh/2-8);
+  bx.fillText('Med '+MED.toFixed(1), X(MED), yc+bh/2+18);
+  bx.fillText('Q3 '+Q3.toFixed(1), X(Q3), yc-bh/2-8);
+
+  // points (jittered)
+  let outN = 0, lowN = 0, highN = 0;
+  for(const v of data){
+    const out = v < lf || v > uf;
+    if(out){ outN++; v<lf?lowN++:highN++; }
+    const jy = yc + (Math.random()-0.5)*bh*0.8;
+    bx.fillStyle = out ? '#e5484d' : '#4f8cff';
+    bx.beginPath(); bx.arc(X(v), jy, 2.6, 0, 7); bx.fill();
+  }
+  bx.textAlign = 'left'; bx.fillStyle = '#9aa3b5'; bx.font = '11px system-ui';
+  bx.fillText('Marks (0\u2013100), n = ' + data.length, PAD.l, 18);
+
+  document.getElementById('sQ1').textContent = Q1.toFixed(1);
+  document.getElementById('sMed').textContent = MED.toFixed(1);
+  document.getElementById('sQ3').textContent = Q3.toFixed(1);
+  document.getElementById('sIQR').textContent = IQR.toFixed(1);
+  document.getElementById('sLF').textContent = lf.toFixed(1);
+  document.getElementById('sUF').textContent = uf.toFixed(1);
+  document.getElementById('sOut').textContent = outN + ' (low ' + lowN + ', high ' + highN + ')';
+}
+
+function drawHist(){
+  const {lf, uf} = fences();
+  let treated, note;
+  if(mode === 'trim'){
+    treated = data.filter(v=>v>=lf && v<=uf);
+    note = '<b>' + (data.length - treated.length) + ' rows removed</b> (n: ' + data.length +
+           ' \u2192 ' + treated.length + '). Trimming discards extreme rows entirely, so the shape ' +
+           'stays smooth \u2014 but you lose data, and the outliers may have been genuine.';
+  } else {
+    treated = data.map(v => v < lf ? lf : (v > uf ? uf : v));
+    const clipped = data.filter(v=>v<lf || v>uf).length;
+    note = '<b>' + clipped + ' values clipped</b> to the fences (n stays ' + data.length + '). ' +
+           'Notice the tall spikes at the fence edges \u2014 clipped values pile up at exactly ' +
+           lf.toFixed(1) + ' and ' + uf.toFixed(1) + '.';
+  }
+  document.getElementById('treatText').innerHTML = note;
+
+  const hc = document.getElementById('hist'), hx = hc.getContext('2d');
+  const HW=hc.width, HH=hc.height, bins = 30;
+  const lo = Math.min(...data)-2, hi = Math.max(...data)+2;
+  const counts = new Array(bins).fill(0);
+  for(const v of treated){ const b=Math.min(bins-1, Math.floor((v-lo)/(hi-lo)*bins)); counts[b]++; }
+  const mx = Math.max(...counts);
+  hx.clearRect(0,0,HW,HW*0+HH);
+  const bwpx = (HW-40)/bins;
+  for(let b=0;b<bins;b++){
+    const hgt = (counts[b]/mx)*(HH-50);
+    const bx0 = 20 + b*bwpx;
+    const centre = lo + (b+0.5)/bins*(hi-lo);
+    const isSpike = mode==='cap' && (Math.abs(centre-lf)<(hi-lo)/bins || Math.abs(centre-uf)<(hi-lo)/bins);
+    hx.fillStyle = isSpike ? '#c46a1b' : 'rgba(79,140,255,.65)';
+    hx.fillRect(bx0+1, HH-24-hgt, bwpx-2, hgt);
+  }
+  hx.fillStyle = '#9aa3b5'; hx.font='11px system-ui'; hx.textAlign='center';
+  hx.fillText('marks after ' + (mode==='trim'?'trimming':'capping'), HW/2, HH-8);
+}
+
+function refresh(){
+  document.getElementById('mval').textContent = k.toFixed(1);
+  document.getElementById('modeLabel').textContent = mode === 'trim' ? 'Trim' : 'Cap';
+  drawBox(); drawHist();
+}
+document.getElementById('mult').addEventListener('input', e=>{ k=parseFloat(e.target.value); refresh(); });
+document.getElementById('seg').addEventListener('click', e=>{
+  if(e.target.tagName!=='BUTTON') return;
+  mode = e.target.dataset.mode;
+  document.querySelectorAll('#seg button').forEach(b=>b.classList.toggle('active', b===e.target));
+  refresh();
+});
+refresh();
+</script>
+</body>
+</html>

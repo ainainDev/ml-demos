@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Z-Score Outlier Explorer (Day 42)</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; background:#12141a; color:#e8eaf0;
+         margin:0; padding:20px; }
+  .card { max-width:760px; margin:0 auto; background:#1c1f28; border-radius:12px; padding:22px;
+          box-shadow:0 4px 18px rgba(0,0,0,.45); }
+  h1 { font-size:1.35rem; margin:0 0 6px; }
+  .caption { color:#9aa3b5; font-size:.92rem; margin-bottom:16px; line-height:1.5; }
+  .formula { background:#0e1015; border:1px solid #2c313d; border-radius:8px; padding:10px 14px;
+             font-size:1.15rem; text-align:center; margin-bottom:14px; }
+  .controls { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin-bottom:12px; }
+  label { font-size:.9rem; color:#c7cdd9; }
+  input[type=range] { width:220px; accent-color:#4f8cff; }
+  .thval { font-weight:bold; color:#4f8cff; }
+  .toggle-row { display:flex; align-items:center; gap:8px; font-size:.9rem; }
+  .switch { position:relative; width:42px; height:22px; display:inline-block; }
+  .switch input { opacity:0; width:0; height:0; }
+  .slider-knob { position:absolute; inset:0; background:#3a4050; border-radius:22px; cursor:pointer; transition:.2s; }
+  .slider-knob:before { content:""; position:absolute; height:16px; width:16px; left:3px; top:3px;
+                        background:#fff; border-radius:50%; transition:.2s; }
+  .switch input:checked + .slider-knob { background:#c46a1b; }
+  .switch input:checked + .slider-knob:before { transform:translateX(20px); }
+  canvas { width:100%; height:auto; background:#0e1015; border-radius:8px; border:1px solid #2c313d; }
+  .stats { display:flex; gap:18px; flex-wrap:wrap; margin-top:12px; font-size:.92rem; }
+  .stat b { color:#4f8cff; }
+  .warn { display:none; margin-top:12px; background:#3a2410; border:1px solid #c46a1b; color:#ffd9a3;
+          border-radius:8px; padding:10px 14px; font-size:.9rem; line-height:1.5; }
+  .legend { display:flex; gap:18px; font-size:.85rem; color:#9aa3b5; margin-top:8px; flex-wrap:wrap; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Z-Score Outlier Explorer</h1>
+  <p class="caption"><b>What this shows:</b> how the Z-score method flags outliers in a bell-shaped
+  dataset. Drag the threshold slider and watch the shaded outlier zones (beyond &plusmn;threshold&nbsp;&middot;&nbsp;&sigma;)
+  and the red outlier dots change. The shaded bands also illustrate the empirical rule:
+  68% / 95% / 99.7% of data falls within 1 / 2 / 3 standard deviations of the mean.</p>
+
+  <div class="formula">z = (x &minus; &mu;) / &sigma; &nbsp;&nbsp;|&nbsp;&nbsp; outlier if |z| &gt; threshold</div>
+
+  <div class="controls">
+    <label>Threshold: <input type="range" id="thresh" min="1.5" max="3.5" step="0.1" value="3.0">
+      <span class="thval" id="thval">&plusmn;3.0&sigma;</span></label>
+    <div class="toggle-row">
+      <label class="switch"><input type="checkbox" id="skew"><span class="slider-knob"></span></label>
+      <span>Skewed data</span>
+    </div>
+  </div>
+
+  <canvas id="cv" width="700" height="380"></canvas>
+
+  <div class="legend">
+    <span><span class="dot" style="background:#4f8cff"></span>normal data point</span>
+    <span><span class="dot" style="background:#e5484d"></span>outlier (|z| &gt; threshold)</span>
+    <span><span class="dot" style="background:#3f6ea8"></span>inside threshold</span>
+  </div>
+
+  <div class="stats">
+    <span class="stat">n = <b id="stN"></b></span>
+    <span class="stat">&mu; = <b id="stMean"></b></span>
+    <span class="stat">&sigma; = <b id="stStd"></b></span>
+    <span class="stat">Outliers: <b id="stOut" style="color:#e5484d"></b></span>
+    <span class="stat">Kept: <b id="stKeep"></b></span>
+  </div>
+
+  <div class="warn" id="warn">&#9888; <b>Z-score is unreliable here &mdash; try the IQR method.</b>
+    This data is right-skewed, so the mean is pulled toward the long tail and the standard deviation
+    is inflated. Scores look "fine" even when they are extreme relative to the bulk of the data.
+    Z-scores assume roughly symmetric, bell-shaped data.</div>
+</div>
+
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const PAD = {l:56, r:20, t:20, b:64};
+
+// --- data generators ---
+function randn() { // Box-Muller
+  let u=0, v=0;
+  while(u===0) u = Math.random();
+  while(v===0) v = Math.random();
+  return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v);
+}
+function normalData(){ const a=[]; for(let i=0;i<600;i++) a.push(6.96 + 0.61*randn()); return a; }
+function skewedData(){
+  const a=[];
+  for(let i=0;i<600;i++){
+    const e = -Math.log(1-Math.random());       // exponential, right-skewed
+    a.push(5.4 + 0.55*e + 0.25*Math.abs(randn()));
+  }
+  return a;
+}
+
+let data = normalData();
+let skewed = false;
+
+function mean(a){ return a.reduce((s,x)=>s+x,0)/a.length; }
+function std(a){ const m=mean(a); return Math.sqrt(a.reduce((s,x)=>s+(x-m)*(x-m),0)/a.length); }
+
+function draw(){
+  const t = parseFloat(document.getElementById('thresh').value);
+  document.getElementById('thval').textContent = '\u00B1' + t.toFixed(1) + '\u03C3';
+  const m = mean(data), s = std(data);
+  const lo = m - 4.5*s, hi = m + 4.5*s;
+  const X = v => PAD.l + (v-lo)/(hi-lo)*(W-PAD.l-PAD.r);
+  const Y = v => (H-PAD.b) - v*((H-PAD.b-PAD.t));
+
+  ctx.clearRect(0,0,W,H);
+
+  // theoretical bell curve
+  const peak = 1/(s*Math.sqrt(2*Math.PI));
+  const pdf = x => Math.exp(-((x-m)*(x-m))/(2*s*s))/ (s*Math.sqrt(2*Math.PI));
+
+  // shade outlier zones (|z| > t)
+  ctx.fillStyle = 'rgba(229,72,77,.28)';
+  ctx.beginPath(); ctx.moveTo(X(lo), Y(0));
+  for(let x=lo;x<=m-t*s;x+= (m-t*s-lo)/60) ctx.lineTo(X(x), Y(pdf(x)/peak));
+  ctx.lineTo(X(m-t*s), Y(0)); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(X(m+t*s), Y(0));
+  for(let x=m+t*s;x<=hi;x+=(hi-m-t*s)/60) ctx.lineTo(X(x), Y(pdf(x)/peak));
+  ctx.lineTo(X(hi), Y(0)); ctx.closePath(); ctx.fill();
+
+  // shade inside zone
+  ctx.fillStyle = 'rgba(79,140,255,.18)';
+  ctx.beginPath(); ctx.moveTo(X(m-t*s), Y(0));
+  for(let x=m-t*s;x<=m+t*s;x+=(2*t*s)/120) ctx.lineTo(X(x), Y(pdf(x)/peak));
+  ctx.lineTo(X(m+t*s), Y(0)); ctx.closePath(); ctx.fill();
+
+  // curve outline
+  ctx.strokeStyle = '#c9d4e8'; ctx.lineWidth = 2; ctx.beginPath();
+  for(let x=lo;x<=hi;x+=(hi-lo)/200){ const px=X(x), py=Y(pdf(x)/peak); x===lo?ctx.moveTo(px,py):ctx.lineTo(px,py); }
+  ctx.stroke();
+
+  // sigma markers + empirical rule labels
+  ctx.lineWidth = 1; ctx.fillStyle = '#9aa3b5'; ctx.font = '11px system-ui';
+  ctx.textAlign = 'center';
+  const rule = {1:'68%', 2:'95%', 3:'99.7%'};
+  for(let k=1;k<=3;k++){
+    for(const sgn of [-1,1]){
+      const x = m + sgn*k*s;
+      ctx.strokeStyle = '#5b6478'; ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(X(x), Y(0.02)); ctx.lineTo(X(x), Y(pdf(x)/peak)); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if(k===1) ctx.fillText('-1\u03C3 68% +1\u03C3', X(m), 18);
+    if(k===2) ctx.fillText('-2\u03C3 95% +2\u03C3', X(m), 32);
+    if(k===3) ctx.fillText('-3\u03C3 99.7% +3\u03C3', X(m), 46);
+  }
+  // mean line
+  ctx.strokeStyle = '#e8eaf0'; ctx.setLineDash([]); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(X(m), Y(0)); ctx.lineTo(X(m), Y(1.02)); ctx.stroke();
+  ctx.fillStyle = '#e8eaf0'; ctx.fillText('\u03BC = '+m.toFixed(2), X(m), H-34);
+
+  // threshold boundary lines
+  ctx.strokeStyle = '#e5484d'; ctx.setLineDash([6,4]); ctx.lineWidth = 1.5;
+  for(const sgn of [-1,1]){
+    const x = m + sgn*t*s;
+    ctx.beginPath(); ctx.moveTo(X(x), Y(0)); ctx.lineTo(X(x), Y(1.02)); ctx.stroke();
+    ctx.fillStyle = '#e5484d';
+    ctx.fillText((sgn<0?'-':'+')+t.toFixed(1)+'\u03C3', X(x), H-18);
+  }
+  ctx.setLineDash([]);
+
+  // data points on baseline
+  let out=0;
+  for(const v of data){
+    const z = Math.abs((v-m)/s);
+    const isOut = z > t;
+    if(isOut) out++;
+    ctx.fillStyle = isOut ? '#e5484d' : '#4f8cff';
+    ctx.beginPath(); ctx.arc(X(v), Y(0.015), 2.4, 0, 7); ctx.fill();
+  }
+
+  // axis ticks
+  ctx.fillStyle = '#9aa3b5'; ctx.font = '10px system-ui';
+  for(let k=-4;k<=4;k+=2){
+    const v = m + k*s;
+    ctx.fillText(v.toFixed(2), X(v), H-48);
+  }
+
+  // stats
+  document.getElementById('stN').textContent = data.length;
+  document.getElementById('stMean').textContent = m.toFixed(3);
+  document.getElementById('stStd').textContent = s.toFixed(3);
+  document.getElementById('stOut').textContent = out + ' (' + (100*out/data.length).toFixed(1) + '%)';
+  document.getElementById('stKeep').textContent = (data.length-out);
+}
+
+document.getElementById('thresh').addEventListener('input', draw);
+document.getElementById('skew').addEventListener('change', e => {
+  skewed = e.target.checked;
+  data = skewed ? skewedData() : normalData();
+  document.getElementById('warn').style.display = skewed ? 'block' : 'none';
+  draw();
+});
+draw();
+</script>
+</div>
+</body>
+</html>

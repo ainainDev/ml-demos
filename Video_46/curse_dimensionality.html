@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Curse of Dimensionality Visualizer — Day 46</title>
+<style>
+  body { font-family: 'Segoe UI', system-ui, sans-serif; max-width: 900px; margin: 0 auto;
+         padding: 18px; background: #f4f6fb; color: #1e2430; line-height: 1.55; }
+  h1 { font-size: 1.5rem; color: #2b3a67; margin-bottom: 4px; }
+  h2 { font-size: 1.1rem; color: #2b3a67; margin: 18px 0 8px; }
+  .panel { background: #fff; border-radius: 12px; padding: 16px 18px; margin: 16px 0;
+           box-shadow: 0 2px 10px rgba(43,58,103,.08); }
+  canvas { display: block; margin: 10px auto; max-width: 100%; background: #fafbff;
+           border: 1px solid #e3e8f2; border-radius: 8px; }
+  .controls { text-align: center; margin: 10px 0; }
+  input[type=range] { width: 70%; max-width: 420px; }
+  .big-num { font-size: 2rem; font-weight: 700; color: #b34700; }
+  .stat { font-size: 1rem; font-weight: 600; color: #2b3a67; }
+  button { background: #2b3a67; color: #fff; border: none; border-radius: 8px;
+           padding: 9px 18px; margin: 4px; font-size: .95rem; cursor: pointer; }
+  button.active { background: #b34700; }
+  button:hover { opacity: .9; }
+  .caption { background: #fff8ef; border-left: 4px solid #b34700; padding: 12px 16px;
+             border-radius: 0 10px 10px 0; margin-top: 18px; font-size: .95rem; }
+  .formula { font-family: 'Cambria Math', Georgia, serif; background: #eef1f8;
+             display: inline-block; padding: 3px 10px; border-radius: 6px; }
+</style>
+</head>
+<body>
+
+<h1>📦 The Curse of Dimensionality — Day 46</h1>
+<p>Two interactive panels that show why machine learning gets harder as the number of features grows.</p>
+
+<div class="panel">
+  <h2>(a) Exponential Data Hunger</h2>
+  <p>Drag the slider. To keep the <em>same density</em> of data as in 1-D, the number of points needed grows as <span class="formula">5<sup>d</sup></span>.</p>
+  <div class="controls">
+    <label>Dimensions d = <span id="dVal" class="stat">2</span></label><br>
+    <input type="range" id="dSlider" min="1" max="6" value="2" step="1">
+  </div>
+  <div class="controls">Points needed to keep density: <span id="need" class="big-num">25</span></div>
+  <canvas id="dotsCanvas" width="520" height="300"></canvas>
+  <p id="dotsNote" style="text-align:center; font-size:.9rem; color:#555;"></p>
+</div>
+
+<div class="panel">
+  <h2>(b) Distance Concentration</h2>
+  <p>Pick a dimension. We draw 200 random points inside a unit box and plot the histogram of all pairwise distances.</p>
+  <div class="controls">
+    <button data-d="2" class="active">2 dims</button>
+    <button data-d="10">10 dims</button>
+    <button data-d="50">50 dims</button>
+    <button data-d="200">200 dims</button>
+  </div>
+  <canvas id="histCanvas" width="520" height="260"></canvas>
+  <p class="controls stat" id="ratioLine"></p>
+  <p style="font-size:.9rem; color:#555;">Watch the histogram get <strong>narrower</strong> as d grows — every point becomes almost equally far from every other point.</p>
+</div>
+
+<div class="caption">
+  <strong>What this shows:</strong> In high dimensions, data becomes <em>sparse</em> — you need
+  exponentially more samples just to fill the space (panel a). Worse, distances
+  <em>concentrate</em>: the nearest neighbor is almost as far as the farthest one (panel b).
+  <strong>Lost-wallet intuition:</strong> imagine losing your wallet in a small room vs. a
+  100-room mansion — in the mansion, everywhere is "far away", so "nearest" stops meaning anything.
+  That is why distance-based methods like KNN struggle in very high dimensions.
+</div>
+
+<script>
+/* ---------- Panel (a): exponential dots ---------- */
+const dSlider = document.getElementById('dSlider');
+const dVal = document.getElementById('dVal');
+const need = document.getElementById('need');
+const dotsCanvas = document.getElementById('dotsCanvas');
+const dctx = dotsCanvas.getContext('2d');
+const dotsNote = document.getElementById('dotsNote');
+
+// fixed deterministic layout: golden-angle spiral so counts render cleanly
+function drawDots(d) {
+  const n = Math.pow(5, d);
+  dVal.textContent = d;
+  need.textContent = n.toLocaleString();
+  const W = dotsCanvas.width, H = dotsCanvas.height;
+  dctx.clearRect(0, 0, W, H);
+  if (d <= 4) {
+    const cx = W / 2, cy = H / 2, R = 130;
+    dctx.fillStyle = '#b34700';
+    for (let i = 0; i < n; i++) {
+      const a = i * 2.399963;                       // golden angle
+      const r = R * Math.sqrt((i + 0.5) / n);
+      dctx.beginPath();
+      dctx.arc(cx + r * Math.cos(a), cy + r * Math.sin(a), 2.6, 0, 7);
+      dctx.fill();
+    }
+    dotsNote.textContent = 'These ' + n + ' dots fill the same space that ' + (n / 5) + ' filled in ' + (d - 1) + ' dimension(s). Five times more per dimension!';
+  } else {
+    dctx.fillStyle = '#b34700';
+    dctx.font = 'bold 22px Segoe UI, sans-serif';
+    dctx.textAlign = 'center';
+    dctx.fillText(n.toLocaleString() + ' points', W / 2, H / 2 - 12);
+    dctx.font = '14px Segoe UI, sans-serif';
+    dctx.fillStyle = '#555';
+    dctx.fillText('too many dots to draw — that is the point!', W / 2, H / 2 + 18);
+    dotsNote.textContent = 'At d=' + d + ' you need ' + n.toLocaleString() + ' points — with 2,000 rows you only get the density of a 4-D space.';
+  }
+}
+dSlider.addEventListener('input', e => drawDots(+e.target.value));
+drawDots(2);
+
+/* ---------- Panel (b): distance histogram ---------- */
+const histCanvas = document.getElementById('histCanvas');
+const hctx = histCanvas.getContext('2d');
+const ratioLine = document.getElementById('ratioLine');
+
+function seededRand(seed) {          // tiny deterministic PRNG
+  let s = seed;
+  return () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
+}
+
+function drawHist(d) {
+  const N = 200, BINS = 40;
+  const rnd = seededRand(42 + d);
+  const pts = [];
+  for (let i = 0; i < N; i++) {
+    const p = new Array(d);
+    for (let j = 0; j < d; j++) p[j] = rnd();
+    pts.push(p);
+  }
+  const dists = [];
+  for (let i = 0; i < N; i++)
+    for (let j = i + 1; j < N; j++) {
+      let s = 0;
+      for (let k = 0; k < d; k++) { const t = pts[i][k] - pts[j][k]; s += t * t; }
+      dists.push(Math.sqrt(s));
+    }
+  let mn = Math.min(...dists), mx = Math.max(...dists);
+  const pad = (mx - mn) * 0.08 || 0.01; mn -= pad; mx += pad;
+  const counts = new Array(BINS).fill(0);
+  dists.forEach(v => { const b = Math.min(BINS - 1, Math.floor((v - mn) / (mx - mn) * BINS)); counts[b]++; });
+  const W = histCanvas.width, H = histCanvas.height, ml = 44, mb = 30, top = 14;
+  hctx.clearRect(0, 0, W, H);
+  const bw = (W - ml - 12) / BINS, maxC = Math.max(...counts);
+  hctx.fillStyle = '#2b3a67';
+  counts.forEach((c, i) => {
+    const h = (H - mb - top) * c / maxC;
+    hctx.fillRect(ml + i * bw + 1, H - mb - h, bw - 2, h);
+  });
+  hctx.fillStyle = '#333'; hctx.font = '11px Segoe UI, sans-serif'; hctx.textAlign = 'center';
+  hctx.fillText(mn.toFixed(2), ml, H - 12);
+  hctx.fillText(mx.toFixed(2), W - 12, H - 12);
+  hctx.fillText('pairwise distance (d = ' + d + ')', (W + ml) / 2, H - 12);
+  hctx.fillStyle = '#555'; hctx.textAlign = 'left';
+  hctx.fillText('frequency', 4, 20);
+  ratioLine.textContent = 'min = ' + (mn + pad).toFixed(3) + '   max = ' + (mx - pad).toFixed(3) +
+    '   →  min/max ratio = ' + ((mn + pad) / (mx - pad)).toFixed(3) +
+    '   (ratio → 1 means nearest ≈ farthest)';
+}
+document.querySelectorAll('button[data-d]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('button[data-d]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    drawHist(+btn.dataset.d);
+  });
+});
+drawHist(2);
+</script>
+</body>
+</html>

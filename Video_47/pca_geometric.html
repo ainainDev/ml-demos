@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PCA — Geometric Projection — Day 47 (Part 1)</title>
+<style>
+  body { font-family: 'Segoe UI', system-ui, sans-serif; max-width: 900px; margin: 0 auto;
+         padding: 18px; background: #f4f6fb; color: #1e2430; line-height: 1.55; }
+  h1 { font-size: 1.5rem; color: #2b3a67; margin-bottom: 4px; }
+  .panel { background: #fff; border-radius: 12px; padding: 16px 18px; margin: 16px 0;
+           box-shadow: 0 2px 10px rgba(43,58,103,.08); }
+  canvas { display: block; margin: 10px auto; max-width: 100%; background: #fafbff;
+           border: 1px solid #e3e8f2; border-radius: 8px; }
+  .controls { text-align: center; margin: 10px 0; }
+  input[type=range] { width: 70%; max-width: 420px; }
+  .stat { font-size: 1.05rem; font-weight: 600; color: #2b3a67; }
+  .varbar-wrap { width: 70%; max-width: 420px; height: 18px; background: #e8ecf5;
+                 border-radius: 9px; margin: 6px auto; overflow: hidden; }
+  #varbar { height: 100%; background: linear-gradient(90deg,#2b3a67,#5a7bd6); width: 0%; }
+  button { background: #b34700; color: #fff; border: none; border-radius: 8px;
+           padding: 10px 22px; margin: 6px; font-size: .95rem; cursor: pointer; }
+  button:hover { opacity: .9; }
+  #pc1msg { text-align: center; font-weight: 700; color: #1d7a3a; min-height: 1.6em; }
+  .caption { background: #fff8ef; border-left: 4px solid #b34700; padding: 12px 16px;
+             border-radius: 0 10px 10px 0; margin-top: 18px; font-size: .95rem; }
+</style>
+</head>
+<body>
+
+<h1>📐 PCA: Rotate the Axes, Keep the Spread — Day 47 (Part 1)</h1>
+<p>The cloud below is elongated — points vary a lot along one direction and little along the other. Drag the axis and watch the projected "shadows".</p>
+
+<div class="panel">
+  <div class="controls">
+    <label>Projection axis angle: <span id="angleVal" class="stat">0°</span></label><br>
+    <input type="range" id="angle" min="0" max="180" value="0" step="1">
+  </div>
+  <canvas id="cv" width="560" height="420"></canvas>
+  <div class="controls">
+    <span class="stat">Projected variance: <span id="varNum">0.00</span></span>
+    <div class="varbar-wrap"><div id="varbar"></div></div>
+    <span style="font-size:.85rem; color:#666;">fraction of total variance kept by this axis</span>
+  </div>
+  <div class="controls"><button id="snap">🎯 Snap to PC1</button></div>
+  <div id="pc1msg"></div>
+</div>
+
+<div class="caption">
+  <strong>What this shows:</strong> Each point drops a perpendicular "shadow" (small tick) onto the red
+  axis — that shadow is the 1-D projection. The <em>spread</em> of the shadows is the projected
+  variance. PCA = rotate the axis until that spread is as big as possible. That best axis is
+  <strong>PC1</strong> (about 34° here): it keeps most of the cloud's shape with just one number per
+  point. Project along the wrong axis and all shadows pile on top of each other — information is lost.
+</div>
+
+<script>
+// --- correlated 2D data (elongated cloud), deterministic ---
+function seededRand(seed) { let s = seed; return () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; }; }
+const rnd = seededRand(7);
+const N = 120, pts = [];
+let mx = 0, my = 0;
+for (let i = 0; i < N; i++) {              // elongated Gaussian-ish cloud, rotated ~34°
+  const a = (rnd() + rnd() + rnd() - 1.5) * 1.9;   // along major axis
+  const b = (rnd() + rnd() + rnd() - 1.5) * 0.55;  // along minor axis
+  const th = 34 * Math.PI / 180;
+  const x = a * Math.cos(th) - b * Math.sin(th);
+  const y = a * Math.sin(th) + b * Math.cos(th);
+  pts.push([x, y]); mx += x; my += y;
+}
+mx /= N; my /= N;
+const totalVar = pts.reduce((s, p) => s + (p[0] - mx) ** 2 + (p[1] - my) ** 2, 0) / (N - 1);
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const angle = document.getElementById('angle');
+const angleVal = document.getElementById('angleVal');
+const varNum = document.getElementById('varNum');
+const varbar = document.getElementById('varbar');
+const pc1msg = document.getElementById('pc1msg');
+
+const SX = 46, SY = 44, SC = 60;           // world -> pixel
+const px = x => SX + (x + 2.6) * SC;
+const py = y => SY + (2.6 - y) * SC;
+
+function projVar(ux, uy) {
+  let mean = 0; const vals = pts.map(p => (p[0] - mx) * ux + (p[1] - my) * uy);
+  const m = vals.reduce((s, v) => s + v, 0) / N;
+  const v = vals.reduce((s, val) => s + (val - m) ** 2, 0) / (N - 1);
+  return { vals, v };
+}
+
+function draw() {
+  const deg = +angle.value;
+  angleVal.textContent = deg + '°';
+  const th = deg * Math.PI / 180;
+  const ux = Math.cos(th), uy = Math.sin(th);
+  const { vals, v } = projVar(ux, uy);
+  const frac = v / totalVar;
+
+  ctx.clearRect(0, 0, cv.width, cv.height);
+
+  // projection axis (through centre, long line)
+  ctx.strokeStyle = '#d23b3b'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(px(mx - 3.4 * ux), py(my - 3.4 * uy));
+  ctx.lineTo(px(mx + 3.4 * ux), py(my + 3.4 * uy)); ctx.stroke();
+
+  // shadows (ticks on the axis) + drop lines
+  const range = 3.2;
+  ctx.lineWidth = 1;
+  vals.forEach((t, i) => {
+    const cxp = mx + t * ux, cyp = my + t * uy;
+    ctx.strokeStyle = 'rgba(43,58,103,.30)';
+    ctx.beginPath(); ctx.moveTo(px(pts[i][0]), py(pts[i][1]));
+    ctx.lineTo(px(cxp), py(cyp)); ctx.stroke();
+    ctx.strokeStyle = '#d23b3b'; ctx.lineWidth = 2;
+    const nx = -uy, ny = ux;               // tick perpendicular to axis
+    ctx.beginPath(); ctx.moveTo(px(cxp - 0.07 * nx), py(cyp - 0.07 * ny));
+    ctx.lineTo(px(cxp + 0.07 * nx), py(cyp + 0.07 * ny)); ctx.stroke();
+    ctx.lineWidth = 1;
+  });
+
+  // data points
+  ctx.fillStyle = 'rgba(43,58,103,.75)';
+  pts.forEach(p => { ctx.beginPath(); ctx.arc(px(p[0]), py(p[1]), 3.4, 0, 7); ctx.fill(); });
+  // centre
+  ctx.fillStyle = '#1d7a3a';
+  ctx.beginPath(); ctx.arc(px(mx), py(my), 4.5, 0, 7); ctx.fill();
+
+  varNum.textContent = v.toFixed(3) + '  (' + (frac * 100).toFixed(1) + '% of total)';
+  varbar.style.width = (frac * 100).toFixed(1) + '%';
+
+  // near the true max-variance angle (~34°) auto-celebrate
+  if (Math.abs(deg - 34) <= 2) pc1msg.textContent = '✅ This axis keeps the spread — you found PC1!';
+  else pc1msg.textContent = '';
+}
+
+angle.addEventListener('input', draw);
+document.getElementById('snap').addEventListener('click', () => {
+  angle.value = 34; draw();
+  pc1msg.textContent = '🎯 Snapped to PC1: this axis keeps the spread — shadows stay far apart, so one number per point preserves the cloud.';
+});
+draw();
+</script>
+</body>
+</html>

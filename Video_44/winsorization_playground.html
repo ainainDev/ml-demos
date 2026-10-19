@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Winsorization Playground (Day 44)</title>
+<style>
+  body { font-family:system-ui,-apple-system,sans-serif; background:#12141a; color:#e8eaf0;
+         margin:0; padding:20px; }
+  .card { max-width:860px; margin:0 auto; background:#1c1f28; border-radius:12px; padding:22px;
+          box-shadow:0 4px 18px rgba(0,0,0,.45); }
+  h1 { font-size:1.35rem; margin:0 0 6px; }
+  .caption { color:#9aa3b5; font-size:.92rem; margin-bottom:16px; line-height:1.5; }
+  .controls { display:flex; flex-wrap:wrap; gap:20px; align-items:center; margin-bottom:12px; }
+  .sliders label { font-size:.9rem; color:#c7cdd9; display:block; margin-bottom:8px; }
+  input[type=range] { width:200px; accent-color:#4f8cff; }
+  .pval { font-weight:bold; color:#4f8cff; }
+  .seg { display:flex; background:#0e1015; border:1px solid #2c313d; border-radius:8px; overflow:hidden; }
+  .seg button { background:transparent; border:0; color:#9aa3b5; padding:9px 18px; cursor:pointer; font-size:.92rem; }
+  .seg button.active { background:#4f8cff; color:#fff; font-weight:bold; }
+  .hists { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .hists figure { margin:0; }
+  .hists figcaption { text-align:center; font-size:.85rem; color:#9aa3b5; margin-top:4px; }
+  canvas { width:100%; height:auto; background:#0e1015; border-radius:8px; border:1px solid #2c313d; }
+  table { width:100%; border-collapse:collapse; margin-top:14px; font-size:.92rem; }
+  th, td { border:1px solid #2c313d; padding:8px 10px; text-align:center; }
+  th { background:#0e1015; color:#9aa3b5; font-weight:600; }
+  td b { color:#4f8cff; }
+  .note { margin-top:12px; background:#0e1015; border-left:4px solid #c46a1b; border-radius:0 8px 8px 0;
+          padding:10px 14px; font-size:.9rem; color:#c7cdd9; line-height:1.55; }
+  .legend { display:flex; gap:16px; font-size:.85rem; color:#9aa3b5; margin-top:10px; flex-wrap:wrap; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Winsorization Playground</h1>
+  <p class="caption"><b>What this shows:</b> two ways to handle extreme values in a height dataset
+  (inches, with a long right tail). Set the lower and upper percentile fences, then compare
+  <b>Trim</b> (delete the extremes) with <b>Winsorize</b> (cap them at the fence values).
+  Watch the before/after histograms and the stats table update.</p>
+
+  <div class="controls">
+    <div class="sliders">
+      <label>Lower fence: <input type="range" id="pLow" min="0" max="5" step="0.5" value="1">
+        <span class="pval" id="pLowV">1st percentile</span></label>
+      <label>Upper fence: <input type="range" id="pHigh" min="95" max="100" step="0.5" value="99">
+        <span class="pval" id="pHighV">99th percentile</span></label>
+    </div>
+    <div class="seg" id="seg">
+      <button data-mode="trim">Trim (drop rows)</button>
+      <button class="active" data-mode="winsor">Winsorize (cap)</button>
+    </div>
+  </div>
+
+  <div class="hists">
+    <figure><canvas id="before" width="400" height="230"></canvas>
+      <figcaption>Before: original heights</figcaption></figure>
+    <figure><canvas id="after" width="400" height="230"></canvas>
+      <figcaption id="afterCap">After: winsorized</figcaption></figure>
+  </div>
+
+  <div class="legend">
+    <span><span class="dot" style="background:#4f8cff"></span>kept / bulk values</span>
+    <span><span class="dot" style="background:#e5484d"></span>trimmed-away region (shown in "before")</span>
+    <span><span class="dot" style="background:#c46a1b"></span>winsorize pile-up spike at the cap</span>
+  </div>
+
+  <table>
+    <tr><th>Dataset</th><th>n rows</th><th>Mean</th><th>Min</th><th>Max</th></tr>
+    <tr><td>Original</td><td id="oN"></td><td id="oM"></td><td id="oMin"></td><td id="oMax"></td></tr>
+    <tr><td id="tLabel">Winsorized</td><td id="tN"></td><td id="tM"></td><td id="tMin"></td><td id="tMax"></td></tr>
+  </table>
+
+  <div class="note" id="note"></div>
+</div>
+
+<script>
+// --- right-tailed heights: normal bulk ~66in plus very tall outliers ---
+function makeData(){
+  const a = [];
+  let u=0,v=0;
+  const rn = () => { u=0;v=0; while(!u)u=Math.random(); while(!v)v=Math.random();
+                     return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); };
+  for(let i=0;i<480;i++) a.push(66 + 3.2*rn());
+  for(let i=0;i<22;i++)  a.push(74 + Math.random()*7);   // long right tail
+  for(let i=0;i<6;i++)   a.push(52 + Math.random()*5);   // a few short outliers
+  return a;
+}
+const data = makeData();
+const srt = [...data].sort((x,y)=>x-y);
+const pct = p => { const i=(srt.length-1)*p/100, lo=Math.floor(i), hi=Math.ceil(i);
+                   return srt[lo]+(srt[hi]-srt[lo])*(i-lo); };
+const mean = a => a.reduce((s,x)=>s+x,0)/a.length;
+
+let pLow = 1, pHigh = 99, mode = 'winsor';
+
+function histData(cvEl, arr, loF, hiF, modeMark){
+  const cx = cvEl.getContext('2d'), Wd=cvEl.width, Hd=cvEl.height;
+  const bins = 28, padB = 26, padL = 8;
+  const lo = Math.min(...data)-1, hi = Math.max(...data)+1;
+  const counts = new Array(bins).fill(0);
+  for(const v of arr){ const b=Math.min(bins-1, Math.floor((v-lo)/(hi-lo)*bins)); counts[b]++; }
+  const mx = Math.max(...counts, 1);
+  cx.clearRect(0,0,Wd,Hd);
+  const bw = (Wd-padL-8)/bins;
+  for(let b=0;b<bins;b++){
+    const hgt = (counts[b]/mx)*(Hd-padB-14);
+    const x0 = padL + b*bw, c = lo+(b+0.5)/bins*(hi-lo);
+    let fill = 'rgba(79,140,255,.70)';
+    if(modeMark==='trim' && (c<loF || c>hiF)) fill = 'rgba(229,72,77,.55)';
+    if(modeMark==='winsor' && (Math.abs(c-loF)<(hi-lo)/bins || Math.abs(c-hiF)<(hi-lo)/bins) && counts[b]>mx*0.25)
+      fill = '#c46a1b';
+    cx.fillStyle = fill;
+    cx.fillRect(x0+1, Hd-padB-hgt, bw-2, hgt);
+  }
+  // fence ticks
+  const X = v => padL + (v-lo)/(hi-lo)*(Wd-padL-8);
+  cx.strokeStyle = '#8b93a7'; cx.setLineDash([5,4]); cx.lineWidth = 1.2;
+  for(const f of [loF, hiF]){ cx.beginPath(); cx.moveTo(X(f), 8); cx.lineTo(X(f), Hd-padB); cx.stroke(); }
+  cx.setLineDash([]);
+  cx.fillStyle = '#9aa3b5'; cx.font = '10px system-ui'; cx.textAlign = 'center';
+  cx.fillText(loF.toFixed(1), X(loF), Hd-11);
+  cx.fillText(hiF.toFixed(1), X(hiF), Hd-11);
+  cx.textAlign = 'left'; cx.fillText(lo.toFixed(0)+' in', padL, Hd-11);
+  cx.textAlign = 'right'; cx.fillText(hi.toFixed(0)+' in', Wd-8, Hd-11);
+}
+
+function refresh(){
+  const loF = pct(pLow), hiF = pct(pHigh);
+  document.getElementById('pLowV').textContent = pLow + 'th percentile = ' + loF.toFixed(2) + ' in';
+  document.getElementById('pHighV').textContent = pHigh + 'th percentile = ' + hiF.toFixed(2) + ' in';
+
+  let treated, noteTxt;
+  if(mode==='trim'){
+    treated = data.filter(v=>v>=loF && v<=hiF);
+    noteTxt = '<b>Trim:</b> removed ' + (data.length-treated.length) + ' extreme rows (' +
+      (100*(data.length-treated.length)/data.length).toFixed(1) + '%). The mean moves less, but those rows ' +
+      'are gone forever \u2014 dangerous if they were valid measurements.';
+    document.getElementById('afterCap').textContent = 'After: trimmed';
+    document.getElementById('tLabel').textContent = 'Trimmed';
+  } else {
+    treated = data.map(v => v<loF?loF : (v>hiF?hiF:v));
+    const nClip = data.filter(v=>v<loF||v>hiF).length;
+    noteTxt = '<b>Winsorize:</b> clipped ' + nClip + ' values to the fences, n stays at ' + data.length +
+      '. Look at the orange <b>pile-up spikes</b> at the caps \u2014 many distinct extreme values are now ' +
+      'stacked at exactly ' + loF.toFixed(2) + ' and ' + hiF.toFixed(2) + ' in. The row count is preserved, ' +
+      'but the distribution gets an artificial bump at each cap.';
+    document.getElementById('afterCap').textContent = 'After: winsorized';
+    document.getElementById('tLabel').textContent = 'Winsorized';
+  }
+  document.getElementById('note').innerHTML = noteTxt;
+
+  histData(document.getElementById('before'), data, loF, hiF, mode);
+  histData(document.getElementById('after'), treated, loF, hiF, mode);
+
+  document.getElementById('oN').textContent = data.length;
+  document.getElementById('oM').innerHTML = '<b>'+mean(data).toFixed(2)+' in</b>';
+  document.getElementById('oMin').textContent = Math.min(...data).toFixed(2)+' in';
+  document.getElementById('oMax').textContent = Math.max(...data).toFixed(2)+' in';
+  document.getElementById('tN').textContent = treated.length;
+  document.getElementById('tM').innerHTML = '<b>'+mean(treated).toFixed(2)+' in</b>';
+  document.getElementById('tMin').textContent = Math.min(...treated).toFixed(2)+' in';
+  document.getElementById('tMax').textContent = Math.max(...treated).toFixed(2)+' in';
+}
+document.getElementById('pLow').addEventListener('input', e=>{ pLow=parseFloat(e.target.value); refresh(); });
+document.getElementById('pHigh').addEventListener('input', e=>{ pHigh=parseFloat(e.target.value); refresh(); });
+document.getElementById('seg').addEventListener('click', e=>{
+  if(e.target.tagName!=='BUTTON') return;
+  mode = e.target.dataset.mode;
+  document.querySelectorAll('#seg button').forEach(b=>b.classList.toggle('active', b===e.target));
+  refresh();
+});
+refresh();
+</script>
+</body>
+</html>

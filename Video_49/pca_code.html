@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PCA — Explained Variance — Day 47 (Part 3)</title>
+<style>
+  body { font-family: 'Segoe UI', system-ui, sans-serif; max-width: 940px; margin: 0 auto;
+         padding: 18px; background: #f4f6fb; color: #1e2430; line-height: 1.55; }
+  h1 { font-size: 1.5rem; color: #2b3a67; margin-bottom: 4px; }
+  h2 { font-size: 1.1rem; color: #2b3a67; margin: 14px 0 6px; }
+  .panel { background: #fff; border-radius: 12px; padding: 16px 18px; margin: 16px 0;
+           box-shadow: 0 2px 10px rgba(43,58,103,.08); }
+  canvas { display: block; margin: 10px auto; max-width: 100%; background: #fafbff;
+           border: 1px solid #e3e8f2; border-radius: 8px; }
+  .controls { text-align: center; margin: 10px 0; }
+  input[type=range] { width: 70%; max-width: 420px; }
+  .stat { font-size: 1.05rem; font-weight: 600; color: #2b3a67; }
+  .big { font-size: 1.7rem; font-weight: 700; color: #1d7a3a; }
+  .warn { background: #fff4e8; border-left: 4px solid #b34700; padding: 10px 14px;
+          border-radius: 0 8px 8px 0; margin-top: 10px; font-size: .93rem; }
+  button { background: #2b3a67; color: #fff; border: none; border-radius: 8px;
+           padding: 9px 18px; margin: 4px; font-size: .95rem; cursor: pointer; }
+  button.on { background: #b34700; }
+  .caption { background: #fff8ef; border-left: 4px solid #b34700; padding: 12px 16px;
+             border-radius: 0 10px 10px 0; margin-top: 18px; font-size: .95rem; }
+  .legend { text-align: center; font-size: .85rem; color: #555; }
+  .sw { display: inline-block; width: 18px; height: 10px; border-radius: 2px; margin: 0 4px; vertical-align: middle; }
+</style>
+</head>
+<body>
+
+<h1>📉 PCA — How Many Components to Keep? — Day 47 (Part 3)</h1>
+<p>A digits-like dataset has 784 features. Most of their variance lives in the first few components — the scree chart tells you where to cut.</p>
+
+<div class="panel">
+  <h2>Scree plot: per-component variance + cumulative curve</h2>
+  <div class="controls">
+    <label>Components kept, k = <span id="kVal" class="stat">120</span></label><br>
+    <input type="range" id="kSlider" min="1" max="200" value="120" step="1">
+    &nbsp;<button id="flatBtn">Toggle: flat spectrum</button>
+  </div>
+  <canvas id="scree" width="560" height="300"></canvas>
+  <div class="legend">
+    <span class="sw" style="background:#5a7bd6"></span> per-component variance ratio
+    <span class="sw" style="background:#d23b3b"></span> cumulative variance
+    <span style="margin-left:10px; color:#1d7a3a; font-weight:700;">–– 90% line</span>
+  </div>
+  <p class="controls"><span class="big" id="keptText">120 components keep 90.0% of variance</span></p>
+  <div class="warn hide" id="flatWarn">
+    ⚠️ <strong>When PCA fails:</strong> with a <em>flat</em> spectrum every component carries the same
+    variance — the curve rises in a straight line, so dropping any component throws away real
+    information. There is nothing safe to cut. (Toggle back to see a healthy decaying spectrum.)
+  </div>
+</div>
+
+<div class="panel">
+  <h2>KNN accuracy vs. number of components (the MNIST story)</h2>
+  <canvas id="knn" width="560" height="240"></canvas>
+  <p style="font-size:.9rem; color:#555; text-align:center;">
+    Accuracy shoots up with the first components, then plateaus near the full-data baseline (dashed) —
+    so a small k trains far faster with barely any loss. Push k too far and you gain nothing.</p>
+</div>
+
+<div class="caption">
+  <strong>What this shows:</strong> Eigenvalues of a 784-feature digits-like spectrum decay fast — the
+  first ~120 components already hold ~90% of the total variance, so keeping 120 numbers instead of 784
+  loses little. The red cumulative curve plus the 90% line is how you <em>choose</em> k in practice.
+  The second panel mirrors the MNIST experiment: KNN accuracy climbs steeply and flattens near the
+  full-data baseline, proving the reduced features still work. But if the spectrum is flat (try the
+  toggle), every component matters equally — PCA has nothing safe to drop, and you should not reduce.
+</div>
+
+<script>
+// --- simulated eigenvalue spectra over 784 components ---
+const D = 784, SHOWN = 200;
+function spectrum(flat) {
+  const raw = [];
+  for (let i = 0; i < D; i++) raw.push(flat ? 1 : Math.pow(0.9805, i));
+  const total = raw.reduce((s, v) => s + v, 0);
+  return raw.map(v => v / total);
+}
+let flat = false;
+let ratios = spectrum(false);
+let cum = [];
+ratios.reduce((s, v, i) => (cum[i] = s + v, s + v), 0);
+
+// KNN-style accuracy curve: steep rise, plateau near full-data baseline
+function knnAcc(k) { return Math.min(0.972, 0.52 + 0.46 * (1 - Math.exp(-k / 22))); }
+const BASELINE = knnAcc(D);   // ≈ full-data accuracy
+
+const scree = document.getElementById('scree').getContext('2d');
+const knnC = document.getElementById('knn').getContext('2d');
+const kSlider = document.getElementById('kSlider');
+const kVal = document.getElementById('kVal');
+const keptText = document.getElementById('keptText');
+const flatBtn = document.getElementById('flatBtn');
+const flatWarn = document.getElementById('flatWarn');
+
+function drawScree(k) {
+  const W = 560, H = 300, ml = 46, mb = 34, mt = 14, mr = 12;
+  scree.clearRect(0, 0, W, H);
+  const pw = W - ml - mr, ph = H - mt - mb;
+  // 90% line
+  scree.strokeStyle = '#1d7a3a'; scree.setLineDash([7, 5]); scree.lineWidth = 1.5;
+  scree.beginPath(); scree.moveTo(ml, mt + ph * 0.1); scree.lineTo(W - mr, mt + ph * 0.1); scree.stroke();
+  scree.setLineDash([]);
+  scree.fillStyle = '#1d7a3a'; scree.font = '11px Segoe UI'; scree.textAlign = 'left';
+  scree.fillText('90%', ml + 4, mt + ph * 0.1 - 5);
+  // bars
+  const bw = pw / SHOWN, maxR = Math.max(...ratios.slice(0, SHOWN));
+  for (let i = 0; i < SHOWN; i++) {
+    const h = ph * ratios[i] / maxR * 0.9;
+    scree.fillStyle = i < k ? '#2b3a67' : '#aeb8d4';
+    scree.fillRect(ml + i * bw, mt + ph - h, bw - 0.6, h);
+  }
+  // cumulative curve (0..1 mapped on right axis, same plot height)
+  scree.strokeStyle = '#d23b3b'; scree.lineWidth = 2; scree.beginPath();
+  for (let i = 0; i < SHOWN; i++) {
+    const x = ml + (i + 0.5) * bw, y = mt + ph * (1 - cum[i]);
+    i ? scree.lineTo(x, y) : scree.moveTo(x, y);
+  }
+  scree.stroke();
+  // k marker
+  const kx = ml + (k - 0.5) * bw;
+  scree.strokeStyle = '#b34700'; scree.setLineDash([4, 3]);
+  scree.beginPath(); scree.moveTo(kx, mt); scree.lineTo(kx, mt + ph); scree.stroke();
+  scree.setLineDash([]);
+  // axes labels
+  scree.fillStyle = '#555'; scree.font = '11px Segoe UI'; scree.textAlign = 'center';
+  scree.fillText('component #', ml + pw / 2, H - 8);
+  scree.fillText('1', ml, H - 18); scree.fillText('200', W - mr, H - 18);
+  keptText.textContent = k + ' components keep ' + (cum[k - 1] * 100).toFixed(1) + '% of variance';
+  keptText.style.color = flat ? '#b34700' : '#1d7a3a';
+}
+
+function drawKnn(k) {
+  const W = 560, H = 240, ml = 52, mb = 34, mt = 16, mr = 14;
+  knnC.clearRect(0, 0, W, H);
+  const pw = W - ml - mr, ph = H - mt - mb;
+  const yOf = a => mt + ph * (1 - (a - 0.4) / 0.6);   // axis 0.4..1.0
+  // baseline (full-data accuracy)
+  knnC.strokeStyle = '#888'; knnC.setLineDash([7, 5]); knnC.lineWidth = 1.5;
+  knnC.beginPath(); knnC.moveTo(ml, yOf(BASELINE)); knnC.lineTo(W - mr, yOf(BASELINE)); knnC.stroke();
+  knnC.setLineDash([]); knnC.fillStyle = '#888'; knnC.font = '11px Segoe UI'; knnC.textAlign = 'left';
+  knnC.fillText('full-data baseline ' + (BASELINE * 100).toFixed(1) + '%', ml + 6, yOf(BASELINE) - 6);
+  // curve
+  knnC.strokeStyle = '#2b3a67'; knnC.lineWidth = 2.5; knnC.beginPath();
+  for (let i = 1; i <= SHOWN; i++) {
+    const x = ml + i / SHOWN * pw, y = yOf(knnAcc(i));
+    i === 1 ? knnC.moveTo(x, y) : knnC.lineTo(x, y);
+  }
+  knnC.stroke();
+  // current-k marker
+  const kx = ml + k / SHOWN * pw, ky = yOf(knnAcc(k));
+  knnC.fillStyle = '#d23b3b';
+  knnC.beginPath(); knnC.arc(kx, ky, 6, 0, 7); knnC.fill();
+  knnC.font = 'bold 12px Segoe UI'; knnC.textAlign = 'center';
+  knnC.fillText((knnAcc(k) * 100).toFixed(1) + '% @ k=' + k, Math.min(kx, W - 70), ky - 12);
+  // axes
+  knnC.fillStyle = '#555'; knnC.font = '11px Segoe UI'; knnC.textAlign = 'center';
+  knnC.fillText('components k', ml + pw / 2, H - 8);
+  knnC.textAlign = 'right';
+  for (const a of [0.5, 0.7, 0.9]) knnC.fillText((a * 100) + '%', ml - 6, yOf(a) + 4);
+}
+
+function redraw() {
+  const k = +kSlider.value;
+  kVal.textContent = k;
+  drawScree(k); drawKnn(k);
+}
+kSlider.addEventListener('input', redraw);
+flatBtn.addEventListener('click', () => {
+  flat = !flat;
+  flatBtn.classList.toggle('on', flat);
+  flatBtn.textContent = flat ? 'Toggle: decaying spectrum' : 'Toggle: flat spectrum';
+  flatWarn.classList.toggle('hide', !flat);
+  ratios = spectrum(flat);
+  cum = []; ratios.reduce((s, v, i) => (cum[i] = s + v, s + v), 0);
+  redraw();
+});
+redraw();
+</script>
+</body>
+</html>

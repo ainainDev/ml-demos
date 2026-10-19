@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PCA — Step by Step — Day 47 (Part 2)</title>
+<style>
+  body { font-family: 'Segoe UI', system-ui, sans-serif; max-width: 940px; margin: 0 auto;
+         padding: 18px; background: #f4f6fb; color: #1e2430; line-height: 1.55; }
+  h1 { font-size: 1.5rem; color: #2b3a67; margin-bottom: 4px; }
+  .steps { text-align: center; margin: 14px 0; }
+  button.step { background: #e8ecf5; color: #2b3a67; border: 2px solid #c4cde4;
+           border-radius: 10px; padding: 10px 16px; margin: 4px; font-size: .95rem;
+           cursor: pointer; font-weight: 600; }
+  button.step.active { background: #2b3a67; color: #fff; border-color: #2b3a67; }
+  button.step:hover { opacity: .9; }
+  .panel { background: #fff; border-radius: 12px; padding: 16px 18px; margin: 16px 0;
+           box-shadow: 0 2px 10px rgba(43,58,103,.08); }
+  canvas { display: block; margin: 10px auto; max-width: 100%; background: #fafbff;
+           border: 1px solid #e3e8f2; border-radius: 8px; }
+  .formula { font-family: 'Cambria Math', Georgia, serif; background: #eef1f8;
+             display: inline-block; padding: 4px 12px; border-radius: 6px; margin: 4px 2px; }
+  table.cov { border-collapse: collapse; margin: 12px auto; font-size: 1.05rem; }
+  table.cov td, table.cov th { border: 1px solid #c4cde4; padding: 10px 20px; text-align: center; }
+  table.cov th { background: #eef1f8; color: #2b3a67; }
+  td.diag { background: #e9f7ec; font-weight: 700; }
+  td.off { background: #fff4e8; font-weight: 700; }
+  .eig { text-align: center; font-size: 1.02rem; margin: 8px 0; }
+  .pc1 { color: #1d7a3a; font-weight: 700; }
+  .caption { background: #fff8ef; border-left: 4px solid #b34700; padding: 12px 16px;
+             border-radius: 0 10px 10px 0; margin-top: 18px; font-size: .95rem; }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+
+<h1>🧮 PCA — The Four Steps, Worked Out — Day 47 (Part 2)</h1>
+<p>A synthetic 2-feature dataset (100 correlated points). Click each step in order to walk through PCA.</p>
+
+<div class="steps">
+  <button class="step" data-s="1">1️⃣ Mean-center</button>
+  <button class="step" data-s="2">2️⃣ Covariance matrix</button>
+  <button class="step" data-s="3">3️⃣ Eigendecomposition</button>
+  <button class="step" data-s="4">4️⃣ Project</button>
+</div>
+
+<div class="panel" id="step1p">
+  <h3>Step 1 — Mean-center the data</h3>
+  <p>Subtract each column's mean, so the cloud sits at the origin. PCA only cares about <em>spread</em>, not location.</p>
+  <p style="text-align:center;">
+    <span class="formula">mean(x₁) = <span id="m1">…</span></span>
+    <span class="formula">mean(x₂) = <span id="m2">…</span></span>
+  </p>
+  <canvas id="cv1" width="520" height="360"></canvas>
+</div>
+
+<div class="panel hide" id="step2p">
+  <h3>Step 2 — Build the covariance matrix</h3>
+  <p>How much does each feature vary, and how do the two vary <em>together</em>?</p>
+  <p style="text-align:center;"><span class="formula">cov(x, y) = Σ (xᵢ − x̄)(yᵢ − ȳ) / (n − 1)</span></p>
+  <table class="cov">
+    <tr><th></th><th>x₁</th><th>x₂</th></tr>
+    <tr><th>x₁</th><td class="diag" id="c11">…</td><td class="off" id="c12">…</td></tr>
+    <tr><th>x₂</th><td class="off" id="c21">…</td><td class="diag" id="c22">…</td></tr>
+  </table>
+  <p style="text-align:center; font-size:.9rem; color:#555;">
+    Diagonal (green) = variance of each feature. Off-diagonal (orange) = covariance —
+    large and positive here, so the features move together (elongated cloud).</p>
+</div>
+
+<div class="panel hide" id="step3p">
+  <h3>Step 3 — Eigendecomposition: A·v = λ·v</h3>
+  <p>Find the directions <span class="formula">v</span> that the covariance matrix <span class="formula">A</span> only stretches:
+  <span class="formula">A·v = λ·v</span>. The stretch factor λ is the variance along that direction.</p>
+  <canvas id="cv3" width="520" height="360"></canvas>
+  <div class="eig" id="eigText"></div>
+</div>
+
+<div class="panel hide" id="step4p">
+  <h3>Step 4 — Project onto PC1: Z = X·V</h3>
+  <p>Take the dot product of every (centered) point with the top eigenvector — each point becomes <strong>one number</strong>.</p>
+  <p style="text-align:center;"><span class="formula">Z = X · V</span>&nbsp; (X centered, V = top eigenvector)</p>
+  <canvas id="cv4" width="520" height="200"></canvas>
+  <p class="eig" id="projText"></p>
+</div>
+
+<div class="caption">
+  <strong>What this shows:</strong> PCA in four mechanical steps — <strong>center</strong> the data,
+  <strong>measure spread</strong> with the covariance matrix, find the <strong>natural axes</strong>
+  of that spread (eigenvectors) and how stretched each is (eigenvalues), then <strong>project</strong>
+  every point onto the top axis. One number per point now carries
+  <span id="capVar">…</span> of the original variance — that is dimensionality reduction.
+</div>
+
+<script>
+function seededRand(seed) { let s = seed; return () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; }; }
+const rnd = seededRand(21);
+const N = 100, raw = [];
+for (let i = 0; i < N; i++) {
+  const a = (rnd() + rnd() + rnd() - 1.5) * 1.7;
+  const b = (rnd() + rnd() + rnd() - 1.5) * 0.6;
+  const th = 40 * Math.PI / 180;
+  raw.push([a * Math.cos(th) - b * Math.sin(th) + 5, a * Math.sin(th) + b * Math.cos(th) + 8]);
+}
+const m1 = raw.reduce((s, p) => s + p[0], 0) / N;
+const m2 = raw.reduce((s, p) => s + p[1], 0) / N;
+const X = raw.map(p => [p[0] - m1, p[1] - m2]);
+
+const c11 = X.reduce((s, p) => s + p[0] * p[0], 0) / (N - 1);
+const c22 = X.reduce((s, p) => s + p[1] * p[1], 0) / (N - 1);
+const c12 = X.reduce((s, p) => s + p[0] * p[1], 0) / (N - 1);
+
+// eigendecomposition of 2x2 symmetric [[a,b],[b,c]]
+const tr = c11 + c22, det = c11 * c22 - c12 * c12;
+const disc = Math.sqrt(tr * tr / 4 - det);
+const lam1 = tr / 2 + disc, lam2 = tr / 2 - disc;      // sorted desc
+function eigvec(lam) { let v = [c12, lam - c11]; const n = Math.hypot(v[0], v[1]); return [v[0] / n, v[1] / n]; }
+const v1 = eigvec(lam1), v2 = eigvec(lam2);
+const totalVar = lam1 + lam2;
+
+// ---- step 1 canvas: before/after centering ----
+document.getElementById('m1').textContent = m1.toFixed(3);
+document.getElementById('m2').textContent = m2.toFixed(3);
+const cv1 = document.getElementById('cv1').getContext('2d');
+cv1.fillStyle = '#2b3a67'; cv1.font = 'bold 13px Segoe UI';
+cv1.fillText('raw (mean ≠ 0)', 20, 20); cv1.fillText('centered (mean = 0)', 290, 20);
+function scatter(c, data, ox, oy, sc, color) {
+  c.fillStyle = color;
+  data.forEach(p => { c.beginPath(); c.arc(ox + p[0] * sc, oy - p[1] * sc, 3, 0, 7); c.fill(); });
+  c.fillStyle = '#d23b3b';
+  const cxm = ox + data.reduce((s, p) => s + p[0], 0) / data.length * sc;
+  const cym = oy - data.reduce((s, p) => s + p[1], 0) / data.length * sc;
+  c.beginPath(); c.arc(cxm, cym, 5, 0, 7); c.fill();
+}
+scatter(cv1, raw, 140, 200, 16, 'rgba(43,58,103,.6)');
+scatter(cv1, X, 390, 200, 44, 'rgba(29,122,58,.7)');
+
+// ---- step 2: fill the matrix ----
+document.getElementById('c11').textContent = c11.toFixed(3);
+document.getElementById('c22').textContent = c22.toFixed(3);
+document.getElementById('c12').textContent = c12.toFixed(3);
+document.getElementById('c21').textContent = c12.toFixed(3);
+
+// ---- step 3: eigenvectors as arrows ----
+const cv3 = document.getElementById('cv3').getContext('2d');
+(function () {
+  const ox = 260, oy = 180, sc = 46;
+  cv3.fillStyle = 'rgba(43,58,103,.55)';
+  X.forEach(p => { cv3.beginPath(); cv3.arc(ox + p[0] * sc, oy - p[1] * sc, 3, 0, 7); cv3.fill(); });
+  function arrow(v, lam, color, w, label) {
+    const L = 2.2 * Math.sqrt(lam) * sc / sc;   // length ∝ sqrt(λ)
+    cv3.strokeStyle = color; cv3.lineWidth = w;
+    const x2 = ox + v[0] * L * sc / 10 * 10 / 10, y2 = oy - v[1] * L * sc / 10 * 10 / 10;
+    // simpler: fixed scale so arrows span the cloud
+    const S = 150;
+    const ex = ox + v[0] * S * Math.sqrt(lam / lam1), ey = oy - v[1] * S * Math.sqrt(lam / lam1);
+    cv3.beginPath(); cv3.moveTo(ox - (ex - ox), oy - (ey - oy)); cv3.lineTo(ex, ey); cv3.stroke();
+    const ang = Math.atan2(ey - oy, ex - ox);
+    cv3.beginPath(); cv3.moveTo(ex, ey);
+    cv3.lineTo(ex - 12 * Math.cos(ang - 0.4), ey - 12 * Math.sin(ang - 0.4));
+    cv3.moveTo(ex, ey);
+    cv3.lineTo(ex - 12 * Math.cos(ang + 0.4), ey - 12 * Math.sin(ang + 0.4)); cv3.stroke();
+    cv3.fillStyle = color; cv3.font = 'bold 14px Segoe UI';
+    cv3.fillText(label, ex + 8, ey - 8);
+  }
+  arrow(v1, lam1, '#1d7a3a', 4, 'v₁ = PC1');
+  arrow(v2, lam2, '#b34700', 2.5, 'v₂');
+})();
+document.getElementById('eigText').innerHTML =
+  'λ₁ = <b>' + lam1.toFixed(3) + '</b>, v₁ = [' + v1[0].toFixed(3) + ', ' + v1[1].toFixed(3) + ']' +
+  ' &nbsp;→&nbsp; <span class="pc1">PC1 keeps ' + (lam1 / totalVar * 100).toFixed(1) + '% of variance</span><br>' +
+  'λ₂ = <b>' + lam2.toFixed(3) + '</b>, v₂ = [' + v2[0].toFixed(3) + ', ' + v2[1].toFixed(3) + ']';
+
+// ---- step 4: 1-D strip plot ----
+const cv4 = document.getElementById('cv4').getContext('2d');
+(function () {
+  const z = X.map(p => p[0] * v1[0] + p[1] * v1[1]);   // Z = X · v1
+  const mn = Math.min(...z), mx = Math.max(...z);
+  const W = 520, y = 90;
+  cv4.strokeStyle = '#2b3a67'; cv4.lineWidth = 2;
+  cv4.beginPath(); cv4.moveTo(30, y); cv4.lineTo(W - 30, y); cv4.stroke();
+  cv4.strokeStyle = '#d23b3b';
+  z.forEach(t => {
+    const x = 30 + (t - mn) / (mx - mn) * (W - 60);
+    cv4.beginPath(); cv4.moveTo(x, y - 14); cv4.lineTo(x, y + 14); cv4.stroke();
+  });
+  cv4.fillStyle = '#555'; cv4.font = '12px Segoe UI'; cv4.textAlign = 'center';
+  cv4.fillText('projected value z (one number per point)', W / 2, y + 44);
+  cv4.fillText(mn.toFixed(2), 30, y + 28); cv4.fillText(mx.toFixed(2), W - 30, y + 28);
+  const kept = lam1 / totalVar * 100;
+  document.getElementById('projText').innerHTML =
+    'Variance preserved: <b class="pc1">' + kept.toFixed(1) + '%</b> — 2 features compressed to 1, almost nothing lost.';
+  document.getElementById('capVar').textContent = kept.toFixed(1) + '%';
+})();
+
+// ---- step buttons ----
+document.querySelectorAll('button.step').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('button.step').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  ['step1p', 'step2p', 'step3p', 'step4p'].forEach(id => document.getElementById(id).classList.add('hide'));
+  document.getElementById('step' + b.dataset.s + 'p').classList.remove('hide');
+}));
+document.querySelector('button.step[data-s="1"]').classList.add('active');
+</script>
+</body>
+</html>
