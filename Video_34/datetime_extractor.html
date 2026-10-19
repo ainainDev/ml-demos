@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Datetime Feature Extractor — Day 34</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+h1{color:#fff;font-size:22px}
+p.sub{color:#94a3b8;font-size:14px}
+input{background:#0b1220;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:10px 14px;font-size:15px}
+button{background:#0284c7;color:#fff;border:none;border-radius:8px;padding:10px 20px;cursor:pointer;font-weight:700;margin-left:8px}
+.panel{background:#1e293b;border-radius:12px;padding:20px;margin-top:16px}
+table{border-collapse:collapse;margin:12px 0;width:100%}td,th{border:1px solid #334155;padding:8px 14px;font-size:14px;text-align:left}
+th{background:#0b1220;color:#38bdf8}
+.val{color:#34d399;font-weight:700;font-family:monospace}
+pre{background:#0b1220;padding:12px;border-radius:8px;color:#a5b4fc;font-size:12.5px;overflow-x:auto}
+.warn{color:#fbbf24;font-size:13px}
+</style></head><body>
+<h1>🎯 One date → many features</h1>
+<p class="sub">Pick a date/time. Every row below is one line of pandas — this is how a single column becomes 10+ features.</p>
+<div><input type="datetime-local" id="dt" value="2026-03-14T10:30"><button onclick="go()">extract</button></div>
+<p class="warn" id="err"></p>
+<div class="panel"><table id="t"><tr><th>Feature</th><th>pandas code</th><th>Value</th></tr></table></div>
+<div class="panel"><h3 style="color:#38bdf8">Elapsed time</h3><table id="t2"><tr><th>Feature</th><th>pandas code</th><th>Value</th></tr></table></div>
+<script>
+const DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
+function row(f,c,v){return `<tr><td>${f}</td><td><code style="color:#a5b4fc">${c}</code></td><td class="val">${v}</td></tr>`;}
+function weekOfYear(d){const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));const day=(t.getUTCDay()+6)%7;t.setUTCDate(t.getUTCDate()-day+3);const first=new Date(Date.UTC(t.getUTCFullYear(),0,4));return 1+Math.round(((t-first)/864e5-3+((first.getUTCDay()+6)%7))/7);}
+function go(){
+  const v=document.getElementById('dt').value, err=document.getElementById('err');
+  if(!v){err.textContent="Pick a date first.";return;} err.textContent="";
+  const d=new Date(v), m=d.getMonth(), dow=(d.getDay()+6)%7, q=Math.floor(m/3)+1;
+  const wkend=DAYS[dow]==="Saturday"||DAYS[dow]==="Sunday";
+  const now=new Date(), diffMs=now-d, days=Math.round(diffMs/864e5);
+  let h=`<tr><th>Feature</th><th>pandas code</th><th>Value</th></tr>`;
+  h+=row("year","df['date'].dt.year",d.getFullYear());
+  h+=row("month number","df['date'].dt.month",m+1);
+  h+=row("month name","df['date'].dt.month_name()",MONTHS[m]);
+  h+=row("day","df['date'].dt.day",d.getDate());
+  h+=row("weekday number (Mon=0)","df['date'].dt.dayofweek",dow);
+  h+=row("weekday name","df['date'].dt.day_name()",DAYS[dow]);
+  h+=row("is weekend","df['date'].dt.day_name().isin(['Saturday','Sunday'])",wkend);
+  h+=row("week of year","df['date'].dt.isocalendar().week",weekOfYear(d));
+  h+=row("quarter","df['date'].dt.quarter","Q"+q);
+  h+=row("semester","q1,q2→H1 else H2",q<=2?"H1":"H2");
+  h+=row("hour","df['date'].dt.hour",d.getHours());
+  h+=row("minute","df['date'].dt.minute",d.getMinutes());
+  document.getElementById('t').innerHTML=h;
+  let h2=`<tr><th>Feature</th><th>pandas code</th><th>Value</th></tr>`;
+  h2+=row("days since","(pd.Timestamp('now')-df['date']).dt.days",days);
+  h2+=row("months since","(pd.Timestamp('now')-df['date'])/np.timedelta64(1,'M')",(diffMs/(30.44*864e5)).toFixed(1));
+  document.getElementById('t2').innerHTML=h2;
+}
+go();
+</script>
+</body></html>

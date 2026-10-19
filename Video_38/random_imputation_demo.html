@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Random Imputation vs Mean — Day 38</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+h1{color:#fff;font-size:22px}
+p.sub{color:#94a3b8;font-size:14px}
+button{background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px 16px;cursor:pointer;margin:4px}
+button.active{background:#0284c7;border-color:#38bdf8;font-weight:700}
+.panel{background:#1e293b;border-radius:12px;padding:20px;margin-top:16px}
+canvas{width:100%;max-width:640px;background:#0b1220;border-radius:8px}
+.stat{font-size:14px;margin:8px 0;line-height:1.7}.stat b{color:#34d399;font-family:monospace}
+input[type=range]{width:200px;vertical-align:middle}
+pre{background:#0b1220;padding:12px;border-radius:8px;color:#a5b4fc;font-size:12.5px;overflow-x:auto}
+table{border-collapse:collapse;margin-top:10px}td,th{border:1px solid #334155;padding:6px 12px;font-size:13px}
+th{background:#0b1220;color:#38bdf8}
+</style></head><body>
+<h1>🎯 Random sampling preserves the shape — the mean spikes it</h1>
+<p class="sub">"Age" data, right-skewed. Compare filling gaps with the mean vs sampling from the observed values.</p>
+<div>Missing: <input type="range" id="miss" min="5" max="50" value="25" oninput="rerun()"><span id="mlab">25%</span></div>
+<div style="margin-top:10px">
+<button class="active" onclick="run('random',this)">random sample</button>
+<button onclick="run('mean',this)">mean</button>
+</div>
+<div class="panel"><canvas id="c" width="640" height="280"></canvas>
+<div class="stat" id="s"></div><pre id="code"></pre></div>
+<div class="panel"><h3 style="color:#38bdf8">Bonus: the missing indicator trick</h3>
+<table><tr><th>Age</th><th>Age_missing?</th></tr>
+<tr><td>24</td><td>0</td></tr><tr><td><span style="color:#f87171">NaN → filled</span></td><td><b style="color:#34d399">1</b></td></tr>
+<tr><td>31</td><td>0</td></tr></table>
+<p class="sub" style="margin-top:10px">Add one binary flag column per missing column — the model learns "was missing" as a signal. In the lesson's demo, this lifted logistic-regression accuracy by ~2% on top of mean imputation.<br><code style="color:#a5b4fc">SimpleImputer(strategy='mean', add_indicator=True)</code></p></div>
+<script>
+let base=[];
+function gen(){base=[];for(let i=0;i<900;i++){base.push(Math.round(22+14*Math.abs(Math.sin(i*1.7))*Math.sqrt(-2*Math.log(Math.random()))));}}
+function hist(data,bins,min,max){const h=new Array(bins).fill(0);for(const x of data){let b=Math.floor((x-min)/(max-min)*bins);b=Math.max(0,Math.min(bins-1,b));h[b]++;}return h;}
+function mean(a){return a.reduce((x,y)=>x+y,0)/a.length;}
+function sd(a){const m=mean(a);return Math.sqrt(a.reduce((x,y)=>x+(y-m)**2,0)/a.length);}
+function rerun(){document.querySelector('button.active').click();}
+function run(kind,el){document.querySelectorAll('button').forEach(b=>b.classList.remove('active'));el.classList.add('active');
+  gen();const pct=+document.getElementById('miss').value;document.getElementById('mlab').textContent=pct+"%";
+  const obs=base.filter(()=>Math.random()*100>=pct);
+  const n=base.length-obs.length;let imp,code;
+  if(kind==='mean'){const fv=mean(obs);imp=obs.concat(Array(n).fill(Math.round(fv)));code=`imp = SimpleImputer(strategy='mean')  # every gap → ${Math.round(fv)}`;}
+  else{imp=obs.slice();for(let i=0;i<n;i++)imp.push(obs[Math.floor(Math.random()*obs.length)]);code=`observed = df['Age'].dropna().to_numpy()\ndf.loc[df['Age'].isna(),'Age'] = np.random.choice(observed, size=n_missing)`;}
+  const h=hist(imp,36,10,90),ho=hist(base,36,10,90),mx=Math.max(...h,...ho);
+  const c=document.getElementById('c'),ctx=c.getContext('2d');ctx.clearRect(0,0,640,280);
+  const w=640/36;for(let i=0;i<36;i++){const bh=h[i]/mx*240;ctx.fillStyle=kind==='mean'?'#f472b6':'#34d399';ctx.fillRect(i*w+1,270-bh,w-2,bh);}
+  ctx.strokeStyle="#64748b";ctx.setLineDash([4,4]);ctx.beginPath();
+  for(let i=0;i<36;i++){const x=i*w+w/2,y=270-ho[i]/mx*240;i?ctx.lineTo(x,y):ctx.moveTo(x,y);}
+  ctx.stroke();ctx.setLineDash([]);
+  const skew=Math.abs(mean(imp)-mean(base)).toFixed(1);
+  document.getElementById('s').innerHTML=
+   `after imputation — mean: <b>${mean(imp).toFixed(1)}</b> (true ${mean(base).toFixed(1)}) · variance: <b>${sd(imp).toFixed(2)}</b> (true ${sd(base).toFixed(2)}) · mean-shift: <b>${skew}</b><br><span style="color:#64748b">dashed grey = true distribution. ${kind==='mean'?'See the tall spike at the fill value — variance collapses.':'Bars hug the true curve — the distribution survives.'}</span>`;
+  document.getElementById('code').textContent=code;
+}
+gen();
+</script>
+</body></html>

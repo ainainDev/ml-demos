@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Outlier Demo — Day 41</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+h1{color:#fff;font-size:22px}
+p.sub{color:#94a3b8;font-size:14px}
+button{background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px 16px;cursor:pointer;margin:4px}
+button.active{background:#0284c7;border-color:#38bdf8;font-weight:700}
+.panel{background:#1e293b;border-radius:12px;padding:20px;margin-top:16px}
+canvas{background:#0b1220;border-radius:8px}
+.stat{font-size:14px;margin:8px 0;line-height:1.8}.stat b{color:#34d399;font-family:monospace}
+input[type=range]{width:200px;vertical-align:middle}
+.lg{display:inline-block;width:26px;height:4px;border-radius:2px;vertical-align:middle;margin:0 6px}
+</style></head><body>
+<h1>🎯 One outlier bends the whole line</h1>
+<p class="sub">Study hours (x) vs marks (y). The <b style="color:#f87171">red point</b> is the outlier. Move it, then trim it or cap it.</p>
+<div>Outlier value (marks): <input type="range" id="ov" min="0" max="120" value="108" oninput="draw()"><span id="olab">108</span></div>
+<div style="margin-top:10px">
+<button class="active" onclick="mode('none',this)">keep outlier</button>
+<button onclick="mode('trim',this)">trim (delete row)</button>
+<button onclick="mode('cap',this)">cap at 90th percentile</button>
+</div>
+<div class="panel"><canvas id="c" width="640" height="360"></canvas>
+<div class="stat" id="s"></div>
+<p class="sub"><span class="lg" style="background:#64748b"></span>true trend (no outlier) &nbsp;<span class="lg" style="background:#38bdf8"></span>fit on your data</p></div>
+<script>
+const W=640,H=360,pad=38;
+let tm='none';
+const pts=[];
+for(let i=0;i<28;i++){const h=1+Math.random()*9,m=4*h+ (Math.random()-0.5)*14;pts.push({x:h,y:Math.max(0,Math.min(100,m))});}
+const sx=v=>pad+(v/10)*(W-2*pad), sy=v=>H-pad-(v/120)*(H-2*pad);
+function fit(data){const n=data.length,mx=data.reduce((s,p)=>s+p.x,0)/n,my=data.reduce((s,p)=>s+p.y,0)/n;
+  let num=0,den=0;for(const p of data){num+=(p.x-mx)*(p.y-my);den+=(p.x-mx)**2;}
+  const b=num/den,a=my-b*mx;return {a,b};}
+function mode(m,el){document.querySelectorAll('button').forEach(b=>b.classList.remove('active'));el.classList.add('active');tm=m;draw();}
+function draw(){
+  const ov=+document.getElementById('ov').value;document.getElementById('olab').textContent=ov;
+  const out={x:9.4,y:ov};
+  const trueFit=fit(pts);
+  let data=pts.slice(),note="no treatment";
+  if(tm==='trim'){note="outlier deleted: 29 → 28 rows";}
+  else if(tm==='cap'){data=pts.slice().map(p=>({...p}));const cap=pts.slice().sort((a,b)=>b.y-a.y)[2].y;const co=Math.min(ov,cap);data.push({x:9.4,y:co});note=`capped at 90th-percentile value ${cap.toFixed(1)} → ${co.toFixed(1)}`;}
+  else{data.push(out);note="outlier kept — watch the slope";}
+  const f=fit(data);
+  const c=document.getElementById('c'),ctx=c.getContext('2d');ctx.clearRect(0,0,W,H);
+  ctx.strokeStyle="#334155";ctx.fillStyle="#64748b";ctx.font="11px sans-serif";
+  for(let h=0;h<=10;h+=2){const x=sx(h);ctx.beginPath();ctx.moveTo(x,pad);ctx.lineTo(x,H-pad);ctx.stroke();ctx.fillText(h+"h",x-6,H-pad+16);}
+  for(let m=0;m<=120;m+=20){const y=sy(m);ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(W-pad,y);ctx.stroke();ctx.fillText(m+"",pad-24,y+4);}
+  function line(fr,col,dash){ctx.strokeStyle=col;ctx.lineWidth=2;ctx.setLineDash(dash||[]);ctx.beginPath();ctx.moveTo(sx(0),sy(fr.a));ctx.lineTo(sx(10),sy(fr.a+fr.b*10));ctx.stroke();ctx.setLineDash([]);}
+  line(trueFit,"#64748b",[6,5]);line(f,"#38bdf8");
+  for(const p of pts){ctx.fillStyle="#38bdf8";ctx.beginPath();ctx.arc(sx(p.x),sy(p.y),4,0,7);ctx.fill();}
+  const oy=tm==='cap'?Math.min(ov,pts.slice().sort((a,b)=>b.y-a.y)[2].y):ov;
+  if(tm!=='trim'){ctx.fillStyle="#f87171";ctx.beginPath();ctx.arc(sx(9.4),sy(oy),6,0,7);ctx.fill();}
+  const shift=Math.abs(f.b-trueFit.b);
+  document.getElementById('s').innerHTML=
+   `treatment: <b>${tm}</b> — ${note}<br>true slope: <b>${trueFit.b.toFixed(2)}</b> · fitted slope: <b>${f.b.toFixed(2)}</b> · slope distortion: <b>${shift.toFixed(2)}</b><br><span style="color:#64748b">Regression minimizes squared error, so one far point pulls the blue line toward itself. ${tm==='trim'?'Trim restores the trend but deletes data — the lesson calls it the worst option.':tm==='cap'?'Capping keeps the row while taming the distortion.':'Try trimming or capping and compare.'}</span>`;
+}
+draw();
+</script>
+</body></html>

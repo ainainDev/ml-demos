@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Imputation Playground — Day 36</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+h1{color:#fff;font-size:22px}
+p.sub{color:#94a3b8;font-size:14px}
+button{background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px 16px;cursor:pointer;margin:4px}
+button.active{background:#0284c7;border-color:#38bdf8;font-weight:700}
+.panel{background:#1e293b;border-radius:12px;padding:20px;margin-top:16px}
+canvas{width:100%;max-width:640px;background:#0b1220;border-radius:8px}
+.stat{font-size:14px;margin:6px 0}.stat b{color:#34d399;font-family:monospace}
+input[type=range]{width:200px;vertical-align:middle}
+pre{background:#0b1220;padding:12px;border-radius:8px;color:#a5b4fc;font-size:12.5px;overflow-x:auto}
+</style></head><body>
+<h1>🎯 Imputation playground — skewed "age" data</h1>
+<p class="sub">Missing values appear as red ticks. Impute them and watch the histogram change.</p>
+<div>Missing: <input type="range" id="miss" min="5" max="40" value="18" oninput="rerun()"><span id="mlab">18%</span></div>
+<div style="margin-top:10px">
+<button class="active" onclick="run('mean',this)">mean</button>
+<button onclick="run('median',this)">median</button>
+<button onclick="run('arb',this)">arbitrary (99)</button>
+<button onclick="run('eod',this)">end of distribution (mean+3σ)</button>
+<button onclick="run('orig',this)">original (no impute)</button>
+</div>
+<div class="panel"><canvas id="c" width="640" height="280"></canvas>
+<div class="stat" id="s"></div>
+<pre id="code"></pre></div>
+<script>
+let base=[];
+function gen(){base=[];for(let i=0;i<800;i++){base.push(Math.round(20+8*Math.sqrt(-2*Math.log(Math.random()))*Math.abs(Math.sin(i))+ (i%37===0?45:0)));}}
+function hist(data,bins,min,max){const h=new Array(bins).fill(0);for(const x of data){let b=Math.floor((x-min)/(max-min)*bins);b=Math.max(0,Math.min(bins-1,b));h[b]++;}return h;}
+function mean(a){return a.reduce((x,y)=>x+y,0)/a.length;}
+function median(a){const s=[...a].sort((x,y)=>x-y);const m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2;}
+function sd(a){const m=mean(a);return Math.sqrt(a.reduce((x,y)=>x+(y-m)**2,0)/a.length);}
+function draw(h,col,ymax){const c=document.getElementById('c'),ctx=c.getContext('2d');ctx.clearRect(0,0,640,280);
+  const w=640/h.length;for(let i=0;i<h.length;i++){const bh=h[i]/ymax*240;ctx.fillStyle=col;ctx.fillRect(i*w+1,270-bh,w-2,bh);}}
+function rerun(){document.querySelector('button.active').click();}
+function run(kind,el){document.querySelectorAll('button').forEach(b=>b.classList.remove('active'));el.classList.add('active');
+  gen();const pct=+document.getElementById('miss').value;document.getElementById('mlab').textContent=pct+"%";
+  const obs=base.filter(()=>Math.random()*100>=pct);
+  let imp,fv,code;
+  if(kind==='orig'){imp=obs;code="// no imputation — this is the truth";}
+  else if(kind==='mean'){fv=mean(obs).toFixed(1);imp=obs.concat(Array(Math.round(base.length*pct/100)).fill(+fv));code=`SimpleImputer(strategy='mean')  # fill_value = ${fv}`;}
+  else if(kind==='median'){fv=median(obs).toFixed(1);imp=obs.concat(Array(Math.round(base.length*pct/100)).fill(+fv));code=`SimpleImputer(strategy='median')  # fill_value = ${fv}`;}
+  else if(kind==='arb'){fv=99;imp=obs.concat(Array(Math.round(base.length*pct/100)).fill(99));code=`SimpleImputer(strategy='constant', fill_value=99)`;}
+  else{fv=(mean(obs)+3*sd(obs)).toFixed(1);imp=obs.concat(Array(Math.round(base.length*pct/100)).fill(+fv));code=`fill_value = mean + 3σ = ${fv}`;}
+  const h=hist(imp,40,10,100),ho=hist(base,40,10,100);
+  const mx=Math.max(...h,...ho);draw(h,kind==='orig'?'#38bdf8':'#f472b6',mx);
+  const c2=document.getElementById('c'),ctx=c2.getContext('2d');
+  const ho2=hist(obs,40,10,100);ctx.strokeStyle="#64748b";ctx.setLineDash([4,4]);ctx.beginPath();
+  for(let i=0;i<ho2.length;i++){const x=i*(640/40)+(640/80);const y=270-ho2[i]/mx*240;i?ctx.lineTo(x,y):ctx.moveTo(x,y);}
+  ctx.stroke();ctx.setLineDash([]);
+  document.getElementById('s').innerHTML=
+    `strategy: <b>${kind}</b> &nbsp;·&nbsp; filled value: <b>${kind==='orig'?'—':fv}</b> &nbsp;·&nbsp; variance after: <b>${sd(imp).toFixed(2)}</b> (true: ${sd(base).toFixed(2)})<br><span style="color:#64748b">dashed grey = observed-only data; pink = after imputation. Notice the spike at the fill value (mean/median) and the variance shrink.</span>`;
+  document.getElementById('code').textContent=code;
+}
+gen();document.getElementById('mlab').textContent="18%";
+</script>
+</body></html>

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KNN Imputer — Day 39</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+h1{color:#fff;font-size:22px}
+p.sub{color:#94a3b8;font-size:14px}
+button{background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px 16px;cursor:pointer;margin:4px}
+button.active{background:#0284c7;border-color:#38bdf8;font-weight:700}
+.panel{background:#1e293b;border-radius:12px;padding:20px;margin-top:16px}
+canvas{background:#0b1220;border-radius:8px}
+.stat{font-size:14px;margin:8px 0;line-height:1.7}.stat b{color:#34d399;font-family:monospace}
+input[type=range]{width:180px;vertical-align:middle}
+pre{background:#0b1220;padding:12px;border-radius:8px;color:#a5b4fc;font-size:12.5px;overflow-x:auto}
+</style></head><body>
+<h1>🎯 KNN imputer — borrow from similar rows</h1>
+<p class="sub">Titanic-style passengers (Fare on x, Family size on y). The <b style="color:#f87171">red point</b> lost its Age value — the k nearest neighbours vote to fill it.</p>
+<div>k = <input type="range" id="k" min="1" max="9" value="5" oninput="draw()"><span id="klab">5</span>
+&nbsp;&nbsp;<button class="active" id="bu" onclick="wmode('uniform',this)">uniform</button><button id="bd" onclick="wmode('distance',this)">distance</button></div>
+<div class="panel"><canvas id="c" width="640" height="360"></canvas>
+<div class="stat" id="s"></div><pre>imputer = KNNImputer(n_neighbors=<span id="kc">5</span>, weights='<span id="wc">uniform</span>')</pre></div>
+<script>
+const W=640,H=360,pad=36;
+let wm='uniform';
+const pts=[];
+for(let i=0;i<60;i++){const fare=Math.random()*320+10,fam=Math.floor(Math.random()*7),age=Math.round(30+ (fare<80?2:12)*(fam/3) + (Math.random()-0.5)*22);pts.push({x:fare,y:fam,age:age});}
+const target={x:150,y:4,trueAge:46}; // age hidden
+const sx=v=>pad+(v/340)*(W-2*pad), sy=v=>H-pad-(v/7)*(H-2*pad);
+function dist(a,b){return Math.hypot(sx(a.x)-sx(b.x),sy(a.y)-sy(b.y));}
+function wmode(m,el){document.getElementById('bu').classList.remove('active');document.getElementById('bd').classList.remove('active');el.classList.add('active');wm=m;document.getElementById('wc').textContent=m;draw();}
+function draw(){
+  const k=+document.getElementById('k').value;document.getElementById('klab').textContent=k;document.getElementById('kc').textContent=k;
+  const ranked=pts.map(p=>({p,d:dist(p,target)})).sort((a,b)=>a.d-b.d).slice(0,k);
+  let num=0,den=0,imp;
+  if(wm==='uniform'){imp=ranked.reduce((s,r)=>s+r.p.age,0)/k;}
+  else{ranked.forEach(r=>{const w=1/(r.d+1e-6);num+=w*r.p.age;den+=w;});imp=num/den;}
+  const c=document.getElementById('c'),ctx=c.getContext('2d');ctx.clearRect(0,0,W,H);
+  ctx.strokeStyle="#334155";ctx.fillStyle="#64748b";ctx.font="11px sans-serif";
+  for(let f=0;f<=320;f+=80){const x=sx(f);ctx.beginPath();ctx.moveTo(x,pad);ctx.lineTo(x,H-pad);ctx.stroke();ctx.fillText("$"+f,x-8,H-pad+16);}
+  for(let f=0;f<=7;f++){const y=sy(f);ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(W-pad,y);ctx.stroke();ctx.fillText(f+"",pad-14,y+4);}
+  ctx.fillText("Fare →",W/2,H-6);ctx.fillText("Family size",6,H/2);
+  ranked.forEach(r=>{ctx.strokeStyle="#34d399";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(sx(target.x),sy(target.y));ctx.lineTo(sx(r.p.x),sy(r.p.y));ctx.stroke();});
+  for(const p of pts){ctx.fillStyle="#38bdf8";ctx.beginPath();ctx.arc(sx(p.x),sy(p.y),4,0,7);ctx.fill();}
+  ranked.forEach(r=>{ctx.strokeStyle="#34d399";ctx.lineWidth=2;ctx.beginPath();ctx.arc(sx(r.p.x),sy(r.p.y),6,0,7);ctx.stroke();});
+  ctx.fillStyle="#f87171";ctx.beginPath();ctx.arc(sx(target.x),sy(target.y),7,0,7);ctx.fill();
+  ctx.fillStyle="#fff";ctx.font="bold 12px sans-serif";ctx.fillText("?",sx(target.x)-4,sy(target.y)+4);
+  document.getElementById('s').innerHTML=
+   `k=<b>${k}</b> · weighting=<b>${wm}</b> · imputed Age = <b>${imp.toFixed(1)}</b> (true hidden value: ${target.trueAge}) · error: <b>${Math.abs(imp-target.trueAge).toFixed(1)}</b><br><span style="color:#64748b">Green links = neighbours voting. Switch to distance weighting and drag k — closer neighbours pull harder.</span>`;
+}
+draw();
+</script>
+</body></html>
