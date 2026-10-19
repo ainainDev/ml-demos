@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Which plot for which pair? — bivariate plot chooser</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 780px; margin: 24px auto; padding: 0 16px; line-height: 1.5; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #64748b; margin-top: 0; }
+  .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  canvas { width: 100%; height: 340px; border: 1px solid #e2e8f0; border-radius: 10px; }
+  .controls { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; }
+  .controls fieldset { border: 1px solid #cbd5e1; border-radius: 10px; padding: 8px 14px; margin: 0; }
+  .controls legend { font-size: 13px; color: #64748b; padding: 0 6px; }
+  .controls label { font-size: 14px; margin-right: 10px; }
+  .rec { font-size: 16px; padding: 10px 14px; border-radius: 10px; background: #eff6ff;
+         border: 1px solid #bfdbfe; margin-top: 10px; }
+  .rec b { color: #1d4ed8; }
+  .statline { font-size: 14px; color: #334155; margin-top: 8px; }
+  .legend { font-size: 13px; color: #64748b; display: flex; gap: 18px; margin-top: 6px; flex-wrap: wrap; }
+  .swatch { display: inline-block; width: 22px; height: 4px; vertical-align: middle; margin-right: 5px; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; }
+  .note { font-size: 13px; color: #64748b; }
+</style>
+</head>
+<body>
+<h2>📊 Which plot for which pair?</h2>
+<p class="sub">The plot you choose depends on the <b>data types</b> of the two columns. Pick types for X and Y, toggle a third variable (hue), and watch the correct chart draw itself on synthetic restaurant data.</p>
+
+<div class="card">
+  <div class="controls">
+    <fieldset>
+      <legend>X column type</legend>
+      <label><input type="radio" name="xt" value="num" checked> Numerical (total_bill $)</label>
+      <label><input type="radio" name="xt" value="cat"> Categorical (day)</label>
+    </fieldset>
+    <fieldset>
+      <legend>Y column type</legend>
+      <label><input type="radio" name="yt" value="num" checked> Numerical (tip $)</label>
+      <label><input type="radio" name="yt" value="cat"> Categorical (smoker)</label>
+    </fieldset>
+    <fieldset>
+      <legend>Hue (3rd variable)</legend>
+      <label><input type="radio" name="hue" value="none" checked> None (bivariate)</label>
+      <label><input type="radio" name="hue" value="sex"> sex (multivariate!)</label>
+    </fieldset>
+    <button id="regen">🎲 New data</button>
+  </div>
+  <canvas id="plot" width="740" height="340"></canvas>
+  <div class="legend" id="legend"></div>
+  <div class="rec" id="rec"></div>
+  <div class="statline" id="statline"></div>
+</div>
+
+<div class="card">
+  <b>The cheat sheet (from Day 21)</b>
+  <table style="border-collapse:collapse;width:100%;font-size:14px;margin-top:6px">
+    <tr><th style="text-align:left;border-bottom:1px solid #e2e8f0;padding:6px">Pair</th>
+        <th style="text-align:left;border-bottom:1px solid #e2e8f0;padding:6px">Go-to plot</th>
+        <th style="text-align:left;border-bottom:1px solid #e2e8f0;padding:6px">What it reveals</th></tr>
+    <tr><td style="padding:6px">Numerical × Numerical</td><td style="padding:6px"><b>Scatterplot</b> / lineplot</td><td style="padding:6px">Direction &amp; strength of relationship (total_bill vs tip)</td></tr>
+    <tr><td style="padding:6px">Numerical × Categorical</td><td style="padding:6px"><b>Bar / box / distribution</b> plot</td><td style="padding:6px">How the number's spread differs per category (age by class)</td></tr>
+    <tr><td style="padding:6px">Categorical × Categorical</td><td style="padding:6px"><b>Heatmap</b> of counts</td><td style="padding:6px">Which category combos are common or rare</td></tr>
+  </table>
+  <p class="note">Add <b>hue</b> (a third categorical column) to any plot and bivariate analysis becomes <b>multivariate</b> — more variables in one chart. A heatmap of the <i>correlation matrix</i> and a <b>pairplot</b> (every numeric pair at once) are the multivariate workhorses for the next steps.</p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const DAYS = ['Fri', 'Sat', 'Sun', 'Thur'];
+const SMOKE = ['Yes', 'No'];
+const SEX = ['Male', 'Female'];
+const HUECOL = { Male: '#2563eb', Female: '#f472b6' };
+let rows = [];
+
+function gen() {
+  rows = [];
+  for (let i = 0; i < 400; i++) {
+    const bill = 8 + Math.random() * 42;                       // total_bill
+    const day = DAYS[[0, 1, 2, 2, 3][Math.floor(Math.random() * 5)]];
+    const tip = Math.max(0.5, bill * (0.12 + Math.random() * 0.09));   // tip grows with bill
+    const smoker = Math.random() < (bill > 30 ? 0.35 : 0.18) ? 'Yes' : 'No';
+    const sex = Math.random() < 0.5 ? 'Male' : 'Female';
+    rows.push({ bill, day, tip, smoker, sex });
+  }
+}
+
+function cfg() {
+  return {
+    xt: document.querySelector('input[name=xt]:checked').value,
+    yt: document.querySelector('input[name=yt]:checked').value,
+    hue: document.querySelector('input[name=hue]:checked').value,
+  };
+}
+
+function quant(arr, q) {
+  const s = [...arr].sort((a, b) => a - b);
+  const p = (s.length - 1) * q, lo = Math.floor(p), hi = Math.ceil(p);
+  return s[lo] + (s[hi] - s[lo]) * (p - lo);
+}
+
+const cv = $('plot'), ctx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const PL = 58, PR = 16, PT = 22, PB = 46;
+
+function axes(xTickLabels, yLabel) {
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(PL, PT); ctx.lineTo(PL, H - PB); ctx.lineTo(W - PR, H - PB); ctx.stroke();
+  ctx.fillStyle = '#64748b'; ctx.font = '12px system-ui';
+  ctx.save(); ctx.translate(16, H / 2); ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center'; ctx.fillText(yLabel, 0, 0); ctx.restore();
+  ctx.textAlign = 'center';
+  xTickLabels.forEach((t, i, arr) => {
+    const x = PL + (i + 0.5) * (W - PL - PR) / arr.length;
+    ctx.fillText(t, x, H - PB + 20);
+  });
+  ctx.textAlign = 'left';
+}
+
+function scatterPlot(hue) {
+  const xs = rows.map(r => r.bill), ys = rows.map(r => r.tip);
+  const x0 = Math.min(...xs) - 1, x1 = Math.max(...xs) + 1;
+  const y0 = 0, y1 = Math.max(...ys) + 1;
+  axes([], 'tip ($)');
+  ctx.fillStyle = '#64748b'; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
+  for (let v = 10; v <= 50; v += 10) {
+    const x = PL + (v - x0) / (x1 - x0) * (W - PL - PR);
+    ctx.fillText('$' + v, x, H - PB + 20);
+  }
+  ctx.textAlign = 'left';
+  for (const r of rows) {
+    const x = PL + (r.bill - x0) / (x1 - x0) * (W - PL - PR);
+    const y = H - PB - (r.tip - y0) / (y1 - y0) * (H - PB - PT);
+    ctx.fillStyle = hue === 'sex' ? HUECOL[r.sex] : '#2563eb';
+    ctx.globalAlpha = 0.55;
+    ctx.beginPath(); ctx.arc(x, y, 3.4, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#64748b'; ctx.font = '12px system-ui';
+  ctx.fillText('total_bill ($)', W - PR - 110, H - PB + 20);
+  return corr(xs, ys);
+}
+
+function corr(a, b) {
+  const ma = a.reduce((p, v) => p + v, 0) / a.length, mb = b.reduce((p, v) => p + v, 0) / b.length;
+  let s = 0, sa = 0, sb = 0;
+  for (let i = 0; i < a.length; i++) { s += (a[i] - ma) * (b[i] - mb); sa += (a[i] - ma) ** 2; sb += (b[i] - mb) ** 2; }
+  return s / Math.sqrt(sa * sb);
+}
+
+function boxFor(groups, numKey, catName, hue) {
+  // groups: array of [cat, subset]
+  const all = rows.map(r => r[numKey]);
+  const lo = Math.min(...all), hi = Math.max(...all);
+  const yOf = v => H - PB - (v - lo) / (hi - lo) * (H - PB - PT);
+  axes(groups.map(g => g[0]), catName + (hue === 'sex' ? '' : ''));
+  const slot = (W - PL - PR) / groups.length;
+  groups.forEach(([c, sub], i) => {
+    const vals = sub.map(r => r[numKey]);
+    if (!vals.length) return;
+    const cx = PL + (i + 0.5) * slot;
+    const q1 = quant(vals, .25), med = quant(vals, .5), q3 = quant(vals, .75);
+    const w = Math.min(46, slot * 0.4);
+    ctx.fillStyle = 'rgba(37,99,235,.18)'; ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.rect(cx - w / 2, yOf(q3), w, yOf(q1) - yOf(q3)); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = '#16a34a'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(cx - w / 2, yOf(med)); ctx.lineTo(cx + w / 2, yOf(med)); ctx.stroke();
+    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(cx, yOf(q3)); ctx.lineTo(cx, yOf(hi)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, yOf(q1)); ctx.lineTo(cx, yOf(lo)); ctx.stroke();
+    ctx.fillStyle = '#334155'; ctx.font = '11px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('med ' + med.toFixed(1), cx, H - PB + 34);
+    ctx.textAlign = 'left';
+  });
+}
+
+function groupedBars(xCats, xKey, numKey, hueKey) {
+  const slot = (W - PL - PR) / xCats.length;
+  const groups = xCats.map(c => SEX.map(s => {
+    const v = rows.filter(r => r[xKey] === c && r[hueKey] === s).map(r => r[numKey]);
+    return v.length ? v.reduce((p, x) => p + x, 0) / v.length : 0;
+  }));
+  const mx = Math.max(...groups.flat(), 1) * 1.15;
+  axes(xCats, 'mean ' + numKey + ' ($)');
+  const barW = Math.min(56, slot / (SEX.length + 1));
+  xCats.forEach((c, i) => {
+    SEX.forEach((s, j) => {
+      const x = PL + i * slot + slot / 2 + (j - (SEX.length - 1) / 2) * (barW + 8) - barW / 2;
+      const h = groups[i][j] / mx * (H - PB - PT);
+      ctx.fillStyle = HUECOL[s];
+      ctx.fillRect(x, H - PB - h, barW, h);
+      ctx.fillStyle = '#334155'; ctx.font = '11px system-ui'; ctx.textAlign = 'center';
+      ctx.fillText(groups[i][j].toFixed(1), x + barW / 2, H - PB - h - 5);
+      ctx.textAlign = 'left';
+    });
+  });
+}
+
+function heatmap(xCats, xKey, yCats, yKey) {
+  const mat = xCats.map(c => yCats.map(d => rows.filter(r => r[xKey] === c && r[yKey] === d).length));
+  const mx = Math.max(...mat.flat(), 1);
+  ctx.clearRect(0, 0, W, H);
+  const gx = PL + 10, gy = PT + 8, gw = W - PR - gx, gh = H - PB - gy;
+  const cw = gw / yCats.length, ch = gh / xCats.length;
+  ctx.font = '12px system-ui';
+  yCats.forEach((d, j) => { ctx.fillStyle = '#64748b'; ctx.textAlign = 'center'; ctx.fillText(d, gx + (j + 0.5) * cw, gy - 6); });
+  xCats.forEach((c, i) => { ctx.fillStyle = '#64748b'; ctx.textAlign = 'right'; ctx.fillText(c, gx - 8, gy + (i + 0.5) * ch + 4); });
+  ctx.textAlign = 'left';
+  xCats.forEach((c, i) => yCats.forEach((d, j) => {
+    const f = mat[i][j] / mx;
+    ctx.fillStyle = `rgba(37,99,235,${0.08 + 0.92 * f})`;
+    ctx.fillRect(gx + j * cw + 2, gy + i * ch + 2, cw - 4, ch - 4);
+    ctx.fillStyle = f > 0.55 ? '#fff' : '#1e3a8a'; ctx.font = 'bold 15px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText(mat[i][j], gx + (j + 0.5) * cw, gy + (i + 0.5) * ch + 5);
+    ctx.textAlign = 'left'; ctx.font = '12px system-ui';
+  }));
+  ctx.fillStyle = '#64748b'; ctx.font = '12px system-ui';
+  ctx.fillText('cell = number of bills in that day × smoker combo', gx, H - PB + 26);
+}
+
+function render() {
+  const { xt, yt, hue } = cfg();
+  let rec, stat = '', legend = '';
+  const hueOn = hue === 'sex';
+
+  if (xt === 'num' && yt === 'num') {
+    const r = scatterPlot(hue);
+    rec = `<b>Numerical × Numerical → scatterplot</b>. Each dot is one bill; the upward drift shows a <b>positive relationship</b>: bigger bills, bigger tips.`;
+    stat = `Pearson correlation ≈ <b>${r.toFixed(2)}</b> — near +1 means the two move together strongly.`;
+    legend = hueOn
+      ? `<span><span class="swatch" style="background:${HUECOL.Male}"></span>Male</span><span><span class="swatch" style="background:${HUECOL.Female}"></span>Female</span> ← hue = 3rd variable: this single chart is now <b>multivariate</b>`
+      : `<span>Tip hue on <b>sex</b> to make this plot multivariate.</span>`;
+  } else if (xt === 'cat' && yt === 'num') {
+    if (hueOn) {
+      groupedBars(DAYS, 'day', 'tip', 'sex');
+      rec = `<b>Categorical × Numerical (+ hue) → grouped bar plot</b>. Bars show the <b>mean tip per day</b>, split by sex — three variables, one chart.`;
+      legend = `<span><span class="swatch" style="background:${HUECOL.Male}"></span>Male</span><span><span class="swatch" style="background:${HUECOL.Female}"></span>Female</span>`;
+    } else {
+      boxFor(DAYS.map(d => [d, rows.filter(r => r.day === d)]), 'tip', 'tip ($)', hue);
+      rec = `<b>Categorical × Numerical → box plot</b>. Each box is the <b>full spread of tips</b> for one day (median, quartiles, whiskers) — far more honest than a single mean bar.`;
+      stat = `A bar plot would show only the mean; the box plot also exposes skew and outliers hiding inside each day's tips.`;
+    }
+  } else if (xt === 'num' && yt === 'cat') {
+    if (hueOn) {
+      groupedBars(SMOKE, 'smoker', 'bill', 'sex');
+      rec = `<b>Numerical × Categorical (+ hue) → grouped bar plot</b>, with the categorical column on X. Compare mean bills for smokers vs non-smokers, split by sex.`;
+      legend = `<span><span class="swatch" style="background:${HUECOL.Male}"></span>Male</span><span><span class="swatch" style="background:${HUECOL.Female}"></span>Female</span>`;
+    } else {
+      boxFor(SMOKE.map(d => [d, rows.filter(r => r.smoker === d)]), 'bill', 'total_bill ($)', hue);
+      rec = `<b>Numerical × Categorical → box plot</b>. It doesn't matter which axis holds the category — the box plot shows how the number's distribution shifts between categories.`;
+    }
+  } else {
+    heatmap(DAYS, 'day', SMOKE, 'smoker');
+    rec = `<b>Categorical × Categorical → heatmap</b>. Each cell counts one day × smoker combo — darker means more common. Scatterplots can't show this; two labels have no numbers to scatter.`;
+    stat = `Hue is disabled here: heatmaps already summarize two categories — add a third with a <b>clustermap</b> (grouped by similarity) or faceting instead.`;
+    if (hueOn) document.querySelector('input[name=hue][value=none]').checked = true;
+  }
+
+  $('rec').innerHTML = rec;
+  $('statline').innerHTML = stat;
+  $('legend').innerHTML = legend;
+}
+
+document.querySelectorAll('input[name=xt],input[name=yt],input[name=hue]').forEach(el =>
+  el.addEventListener('change', render));
+$('regen').addEventListener('click', () => { gen(); render(); });
+gen(); render();
+</script>
+</body>
+</html>

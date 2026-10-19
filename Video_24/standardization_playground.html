@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Standardization Playground — mean 0, std 1</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 720px; margin: 24px auto; padding: 0 16px; line-height: 1.5; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #64748b; margin-top: 0; }
+  .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; margin-right: 8px; }
+  button.ghost { background: #e2e8f0; color: #0f172a; }
+  button:disabled { background: #94a3b8; cursor: default; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 10px; }
+  td, th { border-bottom: 1px solid #e2e8f0; padding: 5px 8px; text-align: center; }
+  th { color: #64748b; font-weight: 600; }
+  canvas { width: 100%; height: 260px; border: 1px solid #e2e8f0; border-radius: 10px; }
+  .note { font-size: 13px; color: #64748b; }
+  .stat { font-size: 15px; background: #f1f5f9; border-radius: 10px; padding: 10px 14px; margin: 8px 0; }
+  .big { font-size: 22px; font-weight: 700; color: #2563eb; }
+  .bar { height: 14px; border-radius: 7px; margin: 4px 0; }
+  .ctl { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+  input[type=range] { width: 220px; }
+</style>
+</head>
+<body>
+<h2>⚖️ Standardization playground</h2>
+<p class="sub">Two features, wildly different scales: <b>age</b> (tens) and <b>estimated salary</b> (tens of thousands). Apply a StandardScaler and watch the fair-scale version appear — same shape, mean ≈ 0, std = 1 — then see what that does to KNN distances.</p>
+
+<div class="card">
+  <b>1 · The data — before scaling</b>
+  <p class="note">26 customers like the lesson's ad-click dataset: <span style="color:#2563eb">● did not buy</span>&nbsp;&nbsp;<span style="color:#16a34a">● bought</span></p>
+  <canvas id="before" width="680" height="260"></canvas>
+</div>
+
+<div class="card">
+  <b>2 · Apply the scaler</b>
+  <div class="ctl">
+    <button id="scale">⚖️ Apply StandardScaler</button>
+    <button id="reset" class="ghost">Reset</button>
+  </div>
+  <div class="stat" id="params">The scaler hasn't learned anything yet — press the button.</div>
+  <canvas id="after" width="680" height="260"></canvas>
+  <table>
+    <thead><tr><th>Feature</th><th>Mean (raw)</th><th>Std (raw)</th><th>Mean (scaled)</th><th>Std (scaled)</th></tr></thead>
+    <tbody id="verify">
+      <tr><td colspan="5" class="note">apply the scaler to fill this in</td></tr>
+    </tbody>
+  </table>
+  <p class="note">In a real project: <b>split first, fit on the training set only</b>, then transform both sets — the test data must never influence the learned mean/std.</p>
+</div>
+
+<div class="card">
+  <b>3 · KNN: whose distance is it anyway?</b>
+  <p class="note">Pick the query customer (⭐) with the slider. The table compares its <b>nearest neighbor</b> in raw space vs standardized space — and the bars show how much of the winning distance came from age vs salary.</p>
+  <div class="ctl">
+    <span>Query customer ⭐</span>
+    <input type="range" id="q" min="0" max="25" value="12">
+    <b id="qn">customer 12</b>
+  </div>
+  <table>
+    <thead><tr><th>Space</th><th>Nearest neighbor</th><th>Distance</th><th>Age share of d²</th><th>Salary share of d²</th></tr></thead>
+    <tbody>
+      <tr><td><b>Raw</b></td><td id="nnb">–</td><td id="db">–</td><td id="sb_age">–</td><td id="sb_sal">–</td></tr>
+      <tr><td><b>Standardized</b></td><td id="nna">–</td><td id="da">–</td><td id="sa_age">–</td><td id="sa_sal">–</td></tr>
+    </tbody>
+  </table>
+  <p class="note">Age share (raw):</p><div class="bar" id="bar_b_age" style="background:#f59e0b;width:0%"></div>
+  <p class="note">Age share (standardized):</p><div class="bar" id="bar_a_age" style="background:#2563eb;width:0%"></div>
+  <p class="note" id="knnnote">In raw space the salary difference (tens of thousands) drowns out age (tens) — salary decides "similar" almost alone. After standardization, age and salary split the vote fairly.</p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// deterministic RNG so the demo looks the same every visit
+let seed = 20261024;
+function rnd(){ seed = (seed*1664525 + 1013904223) >>> 0; return seed/4294967296; }
+function randn(){ let u=0,v=0; while(!u)u=rnd(); while(!v)v=rnd();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+
+// ---- data: two clusters like the ad-clicks lesson ----
+const pts = [];
+for (let i=0;i<26;i++){
+  const c = rnd()<0.5 ? 0 : 1;
+  pts.push({
+    x: c ? 46+7*randn() : 30+6*randn(),        // age
+    y: c ? 67000+9000*randn() : 32000+7000*randn(), // salary
+    c
+  });
+}
+let scaledPts = null;
+
+function mean(a){ return a.reduce((s,v)=>s+v,0)/a.length; }
+function std(a){ const m=mean(a); return Math.sqrt(a.reduce((s,v)=>s+(v-m)*(v-m),0)/a.length); }
+const meanX=mean(pts.map(p=>p.x)), stdX=std(pts.map(p=>p.x));
+const meanY=mean(pts.map(p=>p.y)), stdY=std(pts.map(p=>p.y));
+
+// ---- scatter plot ----
+function drawScatter(cv, data, xLab, yLab, xDom, yDom, fmtX, fmtY, queryIdx, nnIdx){
+  const ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  const pad={l:64,r:16,t:12,b:36};
+  const X=v=>pad.l+(v-xDom[0])/(xDom[1]-xDom[0])*(W-pad.l-pad.r);
+  const Y=v=>(H-pad.b)-(v-yDom[0])/(yDom[1]-yDom[0])*(H-pad.b-pad.t);
+  ctx.strokeStyle='#94a3b8'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(pad.l,H-pad.b); ctx.lineTo(W-pad.r,H-pad.b); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(pad.l,pad.t); ctx.lineTo(pad.l,H-pad.b); ctx.stroke();
+  ctx.fillStyle='#64748b'; ctx.font='11px sans-serif';
+  ctx.textAlign='center';
+  for(let i=0;i<=4;i++){ const v=xDom[0]+(xDom[1]-xDom[0])*i/4; ctx.fillText(fmtX(v),X(v),H-pad.b+16); }
+  ctx.textAlign='right';
+  for(let i=0;i<=4;i++){ const v=yDom[0]+(yDom[1]-yDom[0])*i/4; ctx.fillText(fmtY(v),pad.l-6,Y(v)+4); }
+  ctx.textAlign='center'; ctx.fillStyle='#334155'; ctx.font='12px sans-serif';
+  ctx.fillText(xLab,(pad.l+W-pad.r)/2,H-6);
+  // zero axes when domain crosses 0 (mean-centering visual)
+  if(xDom[0]<0&&xDom[1]>0){ ctx.strokeStyle='#e2e8f0'; ctx.beginPath(); ctx.moveTo(X(0),pad.t); ctx.lineTo(X(0),H-pad.b); ctx.stroke(); }
+  if(yDom[0]<0&&yDom[1]>0){ ctx.strokeStyle='#e2e8f0'; ctx.beginPath(); ctx.moveTo(pad.l,Y(0)); ctx.lineTo(W-pad.r,Y(0)); ctx.stroke(); }
+  // points
+  data.forEach((p,i)=>{
+    ctx.fillStyle = p.c===1 ? '#16a34a' : '#2563eb';
+    ctx.beginPath(); ctx.arc(X(p.x),Y(p.y),5,0,7); ctx.fill();
+    if(i===nnIdx){ ctx.strokeStyle='#dc2626'; ctx.lineWidth=2.5;
+      ctx.beginPath(); ctx.arc(X(p.x),Y(p.y),9,0,7); ctx.stroke(); }
+    if(i===queryIdx){ ctx.fillStyle='#f59e0b';
+      ctx.font='16px sans-serif'; ctx.fillText('★',X(p.x),Y(p.y)-12); }
+  });
+}
+
+function refresh(){
+  drawScatter($('before'), pts, 'age (years)', 'estimated salary ($)',
+    [18,62],[10000,100000], v=>v.toFixed(0), v=>(v/1000).toFixed(0)+'k',
+    +$('q').value, knn(false).i);
+  if(scaledPts){
+    const zx=scaledPts.map(p=>p.x), zy=scaledPts.map(p=>p.y);
+    const xd=[Math.min(...zx)-0.3, Math.max(...zx)+0.3];
+    const yd=[Math.min(...zy)-0.3, Math.max(...zy)+0.3];
+    drawScatter($('after'), scaledPts, 'age (z-score)', 'salary (z-score)',
+      xd, yd, v=>v.toFixed(1), v=>v.toFixed(1), +$('q').value, knn(true).i);
+  } else {
+    const ctx=$('after').getContext('2d');
+    ctx.clearRect(0,0,680,260); ctx.fillStyle='#94a3b8'; ctx.font='15px sans-serif';
+    ctx.textAlign='center'; ctx.fillText('press "Apply StandardScaler" — the cloud will re-center at 0 with spread 1',340,130);
+  }
+  updateKnn();
+}
+
+// ---- KNN comparison ----
+function knn(scaled){
+  const qi=+$('q').value;
+  const arr = scaled ? scaledPts : pts;
+  const q = arr[qi];
+  let best=null;
+  for(let i=0;i<arr.length;i++){
+    if(i===qi) continue;
+    const dx=arr[i].x-q.x, dy=arr[i].y-q.y, d2=dx*dx+dy*dy;
+    if(!best||d2<best.d2) best={i, d2, ax:dx*dx, ay:dy*dy, c:pts[i].c};
+  }
+  return best;
+}
+function updateKnn(){
+  const b=knn(false);
+  $('nnb').textContent = 'customer '+b.i+(b.c?' (bought)':' (no buy)');
+  $('db').textContent = Math.sqrt(b.d2).toFixed(1);
+  const pa=b.ax/b.d2*100, ps=b.ay/b.d2*100;
+  $('sb_age').textContent=pa.toFixed(1)+'%'; $('sb_sal').textContent=ps.toFixed(1)+'%';
+  $('bar_b_age').style.width=pa+'%';
+  if(scaledPts){
+    const a=knn(true);
+    $('nna').textContent = 'customer '+a.i+(a.c?' (bought)':' (no buy)');
+    $('da').textContent = Math.sqrt(a.d2).toFixed(2);
+    const qa=a.ax/a.d2*100, qs=a.ay/a.d2*100;
+    $('sa_age').textContent=qa.toFixed(1)+'%'; $('sa_sal').textContent=qs.toFixed(1)+'%';
+    $('bar_a_age').style.width=qa+'%';
+    $('knnnote').innerHTML = a.i===b.i
+      ? 'Same nearest neighbor here, but look at the <b>shares</b>: salary no longer gets a 99% vote by default.'
+      : 'The nearest neighbor <b>changed</b> — standardization picked a genuinely similar customer, not just the closest salary.';
+  }
+}
+
+$('scale').onclick=()=>{
+  scaledPts = pts.map(p=>({ x:(p.x-meanX)/stdX, y:(p.y-meanY)/stdY, c:p.c }));
+  $('params').innerHTML =
+    'Scaler <b>fitted</b> on this data — formula <span class="big">z = (x − x̄) / σ</span><br>' +
+    'Learned <b>mean</b>: age = '+meanX.toFixed(1)+', salary = $'+meanY.toFixed(0) +
+    ' &nbsp;·&nbsp; Learned <b>std</b>: age = '+stdX.toFixed(1)+', salary = $'+stdY.toFixed(0);
+  const zx=scaledPts.map(p=>p.x), zy=scaledPts.map(p=>p.y);
+  $('verify').innerHTML =
+    '<tr><td>age</td><td>'+meanX.toFixed(1)+'</td><td>'+stdX.toFixed(1)+'</td>' +
+    '<td><b>'+mean(zx).toFixed(4)+'</b></td><td><b>'+std(zx).toFixed(4)+'</b></td></tr>' +
+    '<tr><td>salary</td><td>$'+meanY.toFixed(0)+'</td><td>$'+stdY.toFixed(0)+'</td>' +
+    '<td><b>'+mean(zy).toFixed(4)+'</b></td><td><b>'+std(zy).toFixed(4)+'</b></td></tr>';
+  $('scale').disabled=true;
+  refresh();
+};
+$('reset').onclick=()=>{
+  scaledPts=null; $('scale').disabled=false;
+  $('params').textContent='The scaler hasn\'t learned anything yet — press the button.';
+  $('verify').innerHTML='<tr><td colspan="5" class="note">apply the scaler to fill this in</td></tr>';
+  ['nna','da','sa_age','sa_sal'].forEach(id=>$(id).textContent='–');
+  $('bar_a_age').style.width='0%';
+  refresh();
+};
+$('q').oninput=()=>{ $('qn').textContent='customer '+$('q').value; refresh(); };
+
+refresh();
+</script>
+</body>
+</html>

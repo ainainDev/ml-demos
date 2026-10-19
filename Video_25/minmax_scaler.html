@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MinMax vs MaxAbs vs Robust — outlier stress test</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 720px; margin: 24px auto; padding: 0 16px; line-height: 1.5; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #64748b; margin-top: 0; }
+  .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; margin-right: 8px; }
+  button.ghost { background: #e2e8f0; color: #0f172a; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 10px; }
+  td, th { border-bottom: 1px solid #e2e8f0; padding: 5px 8px; text-align: center; }
+  th { color: #64748b; font-weight: 600; }
+  canvas { width: 100%; height: 120px; border: 1px solid #e2e8f0; border-radius: 10px; }
+  .note { font-size: 13px; color: #64748b; }
+  .ctl { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  input[type=range] { width: 180px; }
+  .verdict { font-size: 15px; background: #f1f5f9; border-radius: 10px; padding: 10px 14px; margin: 8px 0; }
+  label { font-size: 15px; }
+</style>
+</head>
+<body>
+<h2>🔧 MinMax vs MaxAbs vs Robust</h2>
+<p class="sub">One dataset, three scalers. Drag the data's range, inject an outlier at <b>500</b>, and watch how differently each scaler reacts.</p>
+
+<div class="card">
+  <b>Controls</b>
+  <div class="ctl">
+    <label>Data min <input type="range" id="dmin" min="0" max="60" value="20"></label><b id="dminv">20</b>
+    <label>Data max <input type="range" id="dmax" min="80" max="140" value="100"></label><b id="dmaxv">100</b>
+  </div>
+  <div class="ctl">
+    <label><input type="checkbox" id="out"> Inject outlier at 500</label>
+  </div>
+  <div class="ctl">
+    <button class="sc" data-s="minmax">MinMax</button>
+    <button class="sc ghost" data-s="maxabs">MaxAbs</button>
+    <button class="sc ghost" data-s="robust">Robust</button>
+  </div>
+</div>
+
+<div class="card">
+  <b>Before — raw scale</b>
+  <p class="note">40 values, uniformly spread between your min and max. <span style="color:#dc2626">● = outlier</span></p>
+  <canvas id="raw" width="680" height="120"></canvas>
+</div>
+
+<div class="card">
+  <b>After — <span id="sname">MinMax</span> scaling</b>
+  <p class="note" id="formula">x′ = (x − min) / (max − min) → [0, 1]</p>
+  <canvas id="scaled" width="680" height="120"></canvas>
+  <div class="verdict" id="verdict"></div>
+  <table>
+    <thead><tr><th>Mapped value</th><th>data min</th><th>data median</th><th>data max</th><th>outlier</th></tr></thead>
+    <tbody><tr id="maprow"></tr></tbody>
+  </table>
+  <p class="note" id="learned"></p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let seed = 987654321;
+function rnd(){ seed = (seed*1664525 + 1013904223) >>> 0; return seed/4294967296; }
+let scaler = 'minmax';
+
+const FORMULAS = {
+  minmax: 'x′ = (x − min) / (max − min) → [0, 1]',
+  maxabs: 'x′ = x / max|x| → [−1, 1]',
+  robust: 'x′ = (x − median) / IQR,  IQR = Q3 − Q1'
+};
+const NAMES = { minmax:'MinMax', maxabs:'MaxAbs', robust:'Robust' };
+
+function makeData(lo, hi, withOut){
+  seed = 987654321; // deterministic per settings
+  const d = [];
+  for(let i=0;i<40;i++) d.push(lo + rnd()*(hi-lo));
+  if(withOut) d.push(500);
+  return d;
+}
+function quantile(sorted, q){
+  const pos = (sorted.length-1)*q, base = Math.floor(pos), rest = pos-base;
+  return sorted[base] + (sorted[base+1]!==undefined ? (sorted[base+1]-sorted[base])*rest : 0);
+}
+
+function scale(data, type){
+  let params, fn;
+  if(type==='minmax'){
+    const mn=Math.min(...data), mx=Math.max(...data);
+    params='learned min = '+mn.toFixed(1)+', max = '+mx.toFixed(1);
+    fn=x=>(x-mn)/(mx-mn);
+  } else if(type==='maxabs'){
+    const ma=Math.max(...data.map(Math.abs));
+    params='learned max|x| = '+ma.toFixed(1);
+    fn=x=>x/ma;
+  } else {
+    const s=[...data].sort((a,b)=>a-b);
+    const med=quantile(s,0.5), q1=quantile(s,0.25), q3=quantile(s,0.75), iqr=q3-q1;
+    params='learned median = '+med.toFixed(1)+', Q1 = '+q1.toFixed(1)+', Q3 = '+q3.toFixed(1)+', IQR = '+iqr.toFixed(1);
+    fn=x=>(x-med)/iqr;
+  }
+  return { vals: data.map(fn), params, fn };
+}
+
+// number-line strip plot with ticks
+function drawStrip(cv, data, dom, fmt, outlierFlags){
+  const ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  const pad={l:52,r:16,t:14,b:30};
+  const X=v=>pad.l+(v-dom[0])/(dom[1]-dom[0])*(W-pad.l-pad.r);
+  const mid=(pad.t+H-pad.b)/2;
+  ctx.strokeStyle='#94a3b8'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(pad.l,mid); ctx.lineTo(W-pad.r,mid); ctx.stroke();
+  ctx.fillStyle='#64748b'; ctx.font='11px sans-serif'; ctx.textAlign='center';
+  for(let i=0;i<=4;i++){
+    const v=dom[0]+(dom[1]-dom[0])*i/4;
+    ctx.fillText(fmt(v),X(v),mid+26);
+    ctx.beginPath(); ctx.moveTo(X(v),mid-4); ctx.lineTo(X(v),mid+4); ctx.stroke();
+  }
+  // jittered dots
+  seed = 1234567;
+  data.forEach((v,i)=>{
+    const j = (rnd()-0.5)*34;
+    ctx.fillStyle = outlierFlags[i] ? '#dc2626' : '#2563eb';
+    ctx.beginPath(); ctx.arc(X(v), mid+j, 5, 0, 7); ctx.fill();
+  });
+}
+
+function refresh(){
+  const lo=+$('dmin').value, hi=+$('dmax').value, withOut=$('out').checked;
+  $('dminv').textContent=lo; $('dmaxv').textContent=hi;
+  $('sname').textContent=NAMES[scaler]; $('formula').textContent=FORMULAS[scaler];
+
+  const data = makeData(lo, hi, withOut);
+  const flags = data.map(v=>v===500);
+  drawStrip($('raw'), data, [0, withOut?560:Math.ceil(hi*1.08)], v=>v.toFixed(0), flags);
+
+  const { vals, params, fn } = scale(data, scaler);
+  const smin=Math.min(...vals), smax=Math.max(...vals);
+  const dom=[smin-0.06*(smax-smin), smax+0.06*(smax-smin)];
+  drawStrip($('scaled'), vals, dom, v=>v.toFixed(1), flags);
+  $('learned').textContent='In sklearn: fit on train only, transform both. '+params+'.';
+
+  // verdict: how much of the scaled range did the NORMAL data keep?
+  const normal = vals.filter((_,i)=>!flags[i]);
+  const nrange = Math.max(...normal)-Math.min(...normal);
+  const total = smax-smin;
+  const keep = total>0 ? nrange/total*100 : 100;
+  const cells = [
+    fn(lo).toFixed(3), fn((lo+hi)/2).toFixed(3), fn(hi).toFixed(3),
+    withOut ? fn(500).toFixed(3) : '—'
+  ];
+  $('maprow').innerHTML = '<td><b>'+NAMES[scaler]+'</b></td>' +
+    cells.map(c=>'<td>'+c+'</td>').join('');
+
+  if(withOut){
+    if(scaler==='minmax')
+      $('verdict').innerHTML='💥 The outlier became the new max, so the 40 normal points got <b>squashed into just '+keep.toFixed(0)+'% of the [0, 1] range</b>. Min-Max is hostage to extremes.';
+    else if(scaler==='maxabs')
+      $('verdict').innerHTML='💥 Same story: max|x| = 500 now, so normal points huddle in <b>'+keep.toFixed(0)+'% of the range</b>. MaxAbs is also min/max-based — outliers rule it too.';
+    else
+      $('verdict').innerHTML='🛡️ The median and quartiles barely noticed the outlier, so the normal data still spans a healthy <b>'+keep.toFixed(0)+'% of its scaled range</b>. The outlier just lands far away ('+fn(500).toFixed(1)+') — exactly where it belongs. This is why Robust wins on dirty data.';
+  } else {
+    $('verdict').innerHTML='No outlier: every scaler behaves nicely — the normal data fills <b>'+keep.toFixed(0)+'% of its scaled range</b>. Toggle the outlier to see them diverge.';
+  }
+}
+
+document.querySelectorAll('.sc').forEach(b=>{
+  b.onclick=()=>{
+    scaler=b.dataset.s;
+    document.querySelectorAll('.sc').forEach(x=>{x.classList.add('ghost');});
+    b.classList.remove('ghost');
+    refresh();
+  };
+});
+['dmin','dmax','out'].forEach(id=>{ $(id).oninput=refresh; $(''+id).onchange=refresh; });
+
+refresh();
+</script>
+</body>
+</html>

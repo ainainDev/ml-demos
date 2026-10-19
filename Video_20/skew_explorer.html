@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skew Explorer — see how distributions lean</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 760px; margin: 24px auto; padding: 0 16px; line-height: 1.5; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #64748b; margin-top: 0; }
+  .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  canvas { width: 100%; height: 300px; border: 1px solid #e2e8f0; border-radius: 10px; }
+  input[type=range] { width: 100%; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; align-items: center; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; }
+  button.ghost { background: #e2e8f0; color: #0f172a; }
+  .stats { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 10px; }
+  .stat { font-size: 15px; }
+  .stat b { font-size: 19px; }
+  .interp { font-size: 16px; margin-top: 10px; padding: 10px 14px; border-radius: 10px;
+            background: #eff6ff; border: 1px solid #bfdbfe; }
+  .legend { font-size: 13px; color: #64748b; display: flex; gap: 18px; margin-top: 6px; }
+  .swatch { display: inline-block; width: 22px; height: 4px; vertical-align: middle; margin-right: 5px; }
+  .note { font-size: 13px; color: #64748b; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 14px; margin-top: 8px; }
+  .kv dt { font-weight: 700; } .kv dd { margin: 0; }
+</style>
+</head>
+<body>
+<h2>📐 Skew explorer</h2>
+<p class="sub">Drag the slider and watch the distribution <b>lean</b>. The mean gets pulled toward the long tail; the median stays with the crowd. 1,000 fresh samples every frame.</p>
+
+<div class="card">
+  <div class="row">
+    <button id="bLeft" class="ghost">⬅ Left skew</button>
+    <button id="bSym" class="ghost">Symmetric</button>
+    <button id="bRight" class="ghost">Right skew ➡</button>
+  </div>
+  <label for="skew"><b>Skew control</b>: <span id="skewLabel">0.0</span></label>
+  <input type="range" id="skew" min="-100" max="100" value="0">
+  <canvas id="plot" width="720" height="300"></canvas>
+  <div class="legend">
+    <span><span class="swatch" style="background:#2563eb"></span>histogram</span>
+    <span><span class="swatch" style="background:#16a34a"></span>mean (pulled by the tail)</span>
+    <span><span class="swatch" style="background:#f59e0b"></span>median (stays with the bulk)</span>
+  </div>
+  <div class="stats">
+    <div class="stat">Mean: <b id="mean">—</b></div>
+    <div class="stat">Median: <b id="median">—</b></div>
+    <div class="stat">Sample skew: <b id="sval">—</b></div>
+  </div>
+  <div class="interp" id="interp"></div>
+  <p class="note">Rule of thumb — <b>skew ≈ 0</b>: symmetric, mean ≈ median · <b>skew &gt; 0</b>: right-skewed, mean &gt; median (tail stretches right, e.g. salaries, fares) · <b>skew &lt; 0</b>: left-skewed, mean &lt; median.</p>
+</div>
+
+<div class="card">
+  <b>Why EDA cares about skew</b>
+  <dl class="kv">
+    <dt>Right-skewed (positive)</dt><dd>Most values small, a few very large. Mean is misleadingly high — the median describes "typical" better. Think salaries or Titanic fares.</dd>
+    <dt>Left-skewed (negative)</dt><dd>Most values large, a few very small. The mean is dragged down.</dd>
+    <dt>Symmetric (zero)</dt><dd>Mean and median agree. Many models (e.g. linear regression) are happiest when features look roughly like this — skew is why we later learn log transforms.</dd>
+  </dl>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const N = 1000, BINS = 28;
+const LO = -6, HI = 6;               // value range shown
+let skew = 0, samples = [];
+
+function randn() {                  // Box–Muller
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+// Skew via quadratic perturbation: x = z + t*(z^2 - 1).
+// t > 0  -> long right tail (right skew); t < 0 -> long left tail.
+function draw() {
+  const t = skew * 0.35;
+  samples = [];
+  for (let i = 0; i < N; i++) {
+    const z = randn();
+    let x = z + t * (z * z - 1);
+    samples.push(x);
+  }
+}
+
+function statsOf(a) {
+  const s = [...a].sort((x, y) => x - y);
+  const mean = a.reduce((p, v) => p + v, 0) / a.length;
+  const median = (s[(N - 1) >> 1] + s[N >> 1]) / 2;
+  const sd = Math.sqrt(a.reduce((p, v) => p + (v - mean) ** 2, 0) / a.length);
+  const m3 = a.reduce((p, v) => p + ((v - mean) / sd) ** 3, 0) / a.length;
+  return { mean, median, skew: m3 };
+}
+
+function render() {
+  draw();
+  const { mean, median, skew: s } = statsOf(samples);
+  $('mean').textContent = mean.toFixed(2);
+  $('median').textContent = median.toFixed(2);
+  $('sval').textContent = (s >= 0 ? "+" : "") + s.toFixed(2);
+  $('skewLabel').textContent = skew.toFixed(1);
+
+  const box = BINS, counts = new Array(BINS).fill(0);
+  let clipped = 0;
+  for (const x of samples) {
+    if (x < LO || x > HI) { clipped++; continue; }
+    const b = Math.min(BINS - 1, Math.floor((x - LO) / (HI - LO) * BINS));
+    counts[b]++;
+  }
+  const maxC = Math.max(...counts, 1);
+
+  const cv = $('plot'), ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height, pad = 34;
+  ctx.clearRect(0, 0, W, H);
+
+  // axes
+  ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad, H - pad); ctx.lineTo(W - 8, H - pad); ctx.stroke();
+  ctx.fillStyle = '#94a3b8'; ctx.font = '11px system-ui';
+  for (let v = -6; v <= 6; v += 3) {
+    const x = pad + (v - LO) / (HI - LO) * (W - pad - 8);
+    ctx.fillText(String(v), x - 4, H - pad + 15);
+    ctx.strokeStyle = '#f1f5f9';
+    ctx.beginPath(); ctx.moveTo(x, 14); ctx.lineTo(x, H - pad); ctx.stroke();
+  }
+
+  // histogram bars
+  const bw = (W - pad - 8) / BINS;
+  for (let b = 0; b < BINS; b++) {
+    const h = counts[b] / maxC * (H - pad - 26);
+    const x = pad + b * bw;
+    const grad = ctx.createLinearGradient(0, H - pad - h, 0, H - pad);
+    grad.addColorStop(0, '#2563eb'); grad.addColorStop(1, '#93c5fd');
+    ctx.fillStyle = grad;
+    ctx.fillRect(x + 1, H - pad - h, bw - 2, h);
+  }
+
+  const xOf = v => pad + (v - LO) / (HI - LO) * (W - pad - 8);
+  function vline(v, color, label, above) {
+    const x = Math.max(pad, Math.min(W - 8, xOf(v)));
+    ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.setLineDash([7, 4]);
+    ctx.beginPath(); ctx.moveTo(x, 14); ctx.lineTo(x, H - pad); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = color; ctx.font = 'bold 12px system-ui';
+    const tx = Math.max(pad, Math.min(W - 8, x + 6));
+    ctx.fillText(label, tx, above);
+  }
+  vline(median, '#f59e0b', 'median ' + median.toFixed(2), 26);
+  vline(mean, '#16a34a', 'mean ' + mean.toFixed(2), 42);
+
+  let msg, col;
+  if (Math.abs(s) < 0.35) {
+    msg = '✅ <b>Symmetric</b> — mean ≈ median. No lean; this is what models like.'; col = '#16a34a';
+  } else if (s > 0) {
+    msg = '➡ <b>Right-skewed (positive skew)</b> — the long tail stretches right and <b>drags the mean above the median</b>. Classic for salaries, fares, tips.'; col = '#b45309';
+  } else {
+    msg = '⬅ <b>Left-skewed (negative skew)</b> — the long tail stretches left and <b>pulls the mean below the median</b>.'; col = '#1d4ed8';
+  }
+  const boxEl = $('interp');
+  boxEl.innerHTML = msg;
+  boxEl.style.borderColor = col; boxEl.style.color = col;
+  if (clipped) boxEl.innerHTML += ` <span class="note">(${clipped} extreme values off-chart)</span>`;
+}
+
+$('skew').addEventListener('input', e => { skew = e.target.value / 100 * 1.5; render(); });
+$('bLeft').addEventListener('click', () => { $('skew').value = -100; skew = -1.5; render(); });
+$('bSym').addEventListener('click', () => { $('skew').value = 0; skew = 0; render(); });
+$('bRight').addEventListener('click', () => { $('skew').value = 100; skew = 1.5; render(); });
+render();
+</script>
+</body>
+</html>
