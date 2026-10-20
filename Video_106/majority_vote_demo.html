@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bagging: majority vote of decision stumps — Day 106</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8;
+          --acc:#38bdf8; --good:#4ade80; --warn:#fbbf24; --pink:#f472b6; --bad:#f87171; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:1080px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .lede { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:10px 14px; font-size:13.5px; line-height:1.8; color:#cbd5e1; margin:12px 0; }
+  .lede b { color:var(--acc); }
+  .lede .formula { color:var(--good); font-weight:700; }
+  .grid { display:grid; grid-template-columns:1.25fr 1fr; gap:14px; margin-top:12px; }
+  @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  canvas { width:100%; height:auto; display:block; background:#0b1220; border-radius:8px; }
+  #cv { cursor:crosshair; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+              padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin:10px 0; }
+  .sliderbox { background:#0b1220; border:1px solid var(--line); border-radius:8px;
+               padding:8px 12px; font-size:13px; color:var(--dim); }
+  .sliderbox b { color:var(--txt); }
+  .sliderbox input[type=range] { width:150px; vertical-align:middle; accent-color:var(--acc); }
+  .chk { background:#0b1220; border:1px solid var(--line); border-radius:8px;
+         padding:8px 12px; font-size:13px; color:var(--dim); display:flex; gap:8px; align-items:center; }
+  .chk input { width:16px; height:16px; accent-color:var(--acc); cursor:pointer; }
+  button { font-size:14px; padding:9px 16px; border-radius:10px; border:none;
+           background:var(--acc); color:#0f172a; font-weight:700; cursor:pointer; }
+  button.ghost { background:#0b1220; color:var(--txt); border:1px solid var(--line); font-weight:400; }
+  .stat { background:#0b1220; border:1px solid var(--line); border-radius:8px;
+          padding:8px 14px; font-size:13.5px; margin-bottom:8px; }
+  .stat .nm { color:var(--dim); }
+  .stat b { color:var(--good); }
+  .chip { display:inline-block; min-width:28px; text-align:center; padding:3px 6px;
+          border-radius:6px; font-size:12px; font-weight:700; margin:2px; color:#0f172a; }
+  .c0 { background:var(--acc); } .c1 { background:var(--warn); }
+  .tally { font-size:13.5px; line-height:1.9; color:#cbd5e1; margin-top:8px; }
+  .tally b { color:var(--txt); }
+  .verdict-ok { color:var(--good); font-weight:700; }
+  .verdict-bad { color:var(--bad); font-weight:700; }
+  .aside { margin-top:14px; background:#0b1220; border:1px dashed var(--line); border-radius:10px;
+           padding:10px 14px; font-size:13px; color:var(--dim); line-height:1.8; }
+  .aside b { color:var(--warn); }
+  .legend { font-size:12px; color:var(--dim); margin-top:8px; }
+  .sw { display:inline-block; width:12px; height:12px; border-radius:50%; margin:0 4px 0 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🗳️ Bagging: majority vote of decision stumps
+    <span class="sub">Day 106 — each member trains on a bootstrap sample; the ensemble takes the majority vote</span>
+  </h1>
+  <div class="lede">
+    <b>Idea:</b> 120 training points, two classes, a wiggly true boundary. Each ensemble member is a
+    <b>decision stump</b> (one threshold on x or y) trained on a bootstrap resample of the points.
+    A single stump is weak — but the <span class="formula">majority vote of many stumps</span> smooths
+    their mistakes away. Drag <b>n_estimators</b> and watch the boundary settle, then try
+    <b>pasting</b> (no replacement) and smaller <b>max_samples</b>.
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Ensemble majority region — click anywhere to place the probe</h3>
+      <canvas id="cv" width="640" height="640"></canvas>
+      <div class="legend">
+        <span class="sw" style="background:#38bdf8"></span>class 0
+        <span class="sw" style="background:#fbbf24"></span>class 1
+        <span class="sw" style="background:#e2e8f0"></span>probe point
+      </div>
+    </div>
+    <div class="card">
+      <h3>Live scores (500 clean test points)</h3>
+      <div class="stat"><span class="nm">One stump, full data:</span> <b id="stBase">–</b></div>
+      <div class="stat"><span class="nm">Mean member accuracy:</span> <b id="stMean">–</b></div>
+      <div class="stat"><span class="nm">Ensemble (majority vote):</span> <b id="stEns">–</b></div>
+      <div class="stat"><span class="nm">Out-of-bag accuracy:</span> <b id="stOob">–</b>
+        <span class="nm" style="font-size:11.5px"> — free validation, like oob_score_</span></div>
+      <div class="stat"><span class="nm">Stability over 5 resamplings:</span> <b id="stStab">–</b></div>
+      <h3 style="margin-top:14px">🔍 Probe votes — each member's call at the probe</h3>
+      <div id="voteChips"></div>
+      <div class="tally" id="voteTally"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h3>Accuracy vs n_estimators — watch it climb, then level off</h3>
+    <canvas id="curve" width="640" height="260"></canvas>
+    <div class="legend">
+      <span class="sw" style="background:#38bdf8"></span>ensemble
+      <span class="sw" style="background:#94a3b8"></span>mean member
+      <span class="sw" style="background:#f472b6"></span>single stump
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <div class="sliderbox">n_estimators: <b id="nVal">21</b>
+        <input type="range" id="nSlider" min="1" max="51" step="2" value="21"></div>
+      <div class="sliderbox">max_samples: <b id="fVal">0.60</b>
+        <input type="range" id="fSlider" min="0.10" max="1.00" step="0.05" value="0.60"></div>
+      <label class="chk"><input type="checkbox" id="bootChk" checked>
+        bootstrap (with replacement) — uncheck for <b>&nbsp;pasting</b></label>
+    </div>
+    <div class="row">
+      <button id="resample">🔀 New bootstrap draws</button>
+      <button id="probeBtn" class="ghost">🎯 Random probe</button>
+    </div>
+  </div>
+
+  <div class="aside">
+    📌 <b>From the video:</b> a bootstrap draw leaves ~36.8% of rows unseen by each member
+    (P = (1 − 1/n)ⁿ ≈ 1/e) — those are the out-of-bag rows scored above. Bagging helps
+    <b>unstable</b> learners most: every stump here is weak on its own, yet the vote beats them all.
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============ deterministic PRNG ============ */
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function seedFrom(){
+  var h = 2166136261;
+  for (var i = 0; i < arguments.length; i++){
+    var n = arguments[i] >>> 0;
+    h ^= n; h = Math.imul(h, 16777619); h ^= h >>> 13;
+  }
+  return h >>> 0;
+}
+
+/* ============ data: 2 classes, boundary x + y = 1 ============ */
+var TRAIN_N = 120, TEST_N = 500;
+function trueLabel(x, y){ return (x + y > 1) ? 1 : 0; }
+function genData(n, rng, flipProb){
+  var pts = [];
+  for (var i = 0; i < n; i++){
+    var x = rng(), y = rng();
+    var t = trueLabel(x, y);
+    pts.push({ x:x, y:y, label:(rng() < flipProb) ? 1 - t : t });
+  }
+  return pts;
+}
+var dataRng = mulberry32(seedFrom(106));
+var TRAIN = genData(TRAIN_N, dataRng, 0.10);  /* noisy labels, like real data */
+var TEST  = genData(TEST_N,  dataRng, 0.0);   /* clean: the truth we score against */
+
+/* ============ decision stump: best (feature, threshold, polarity) ============ */
+function coord(p, f){ return f === 0 ? p.x : p.y; }
+function trainStump(pts){
+  var best = { err: Infinity, f: 0, t: 0.5, pol: 1 };
+  for (var f = 0; f < 2; f++){
+    var idx = pts.map(function(_, i){ return i; })
+                 .sort(function(a, b){ return coord(pts[a], f) - coord(pts[b], f); });
+    for (var p = 1; p < idx.length; p++){
+      var va = coord(pts[idx[p - 1]], f), vb = coord(pts[idx[p]], f);
+      if (va === vb) continue;
+      var t = (va + vb) / 2;
+      for (var pol = 0; pol < 2; pol++){
+        var err = 0;
+        for (var k = 0; k < idx.length; k++){
+          var pt = pts[idx[k]];
+          var pred = (coord(pt, f) >= t) ? (pol ? 1 : 0) : (pol ? 0 : 1);
+          if (pred !== pt.label) err++;
+        }
+        if (err < best.err) best = { err: err, f: f, t: t, pol: pol };
+      }
+    }
+  }
+  return best;
+}
+function stumpPredict(s, x, y){
+  var c = (s.f === 0) ? x : y;
+  return (c >= s.t) ? (s.pol ? 1 : 0) : (s.pol ? 0 : 1);
+}
+
+/* ============ bootstrap / pasting ============ */
+function sampleIdx(n, m, rng, withReplacement){
+  var idx = [], i, j, tmp;
+  if (withReplacement){
+    for (i = 0; i < m; i++) idx.push(Math.floor(rng() * n));
+  } else { /* pasting: shuffle, take first m */
+    var pool = [];
+    for (i = 0; i < n; i++) pool.push(i);
+    for (i = pool.length - 1; i > 0; i--){
+      j = Math.floor(rng() * (i + 1)); tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+    }
+    for (i = 0; i < m; i++) idx.push(pool[i]);
+  }
+  return idx;
+}
+
+/* ============ ensemble ============ */
+var MAXM = 51;
+function buildMembers(drawId, frac, boot){
+  var m = Math.max(1, Math.round(frac * TRAIN_N));
+  var members = [];
+  for (var i = 0; i < MAXM; i++){
+    var rng = mulberry32(seedFrom(106, drawId, i));
+    var idx = sampleIdx(TRAIN_N, m, rng, boot);
+    var sample = idx.map(function(k){ return TRAIN[k]; });
+    var seen = {};
+    for (var q = 0; q < idx.length; q++) seen[idx[q]] = 1;
+    members.push({ stump: trainStump(sample), seen: seen });
+  }
+  return members;
+}
+function majority(votes){
+  var c = 0;
+  for (var i = 0; i < votes.length; i++) c += votes[i];
+  return (c * 2 > votes.length) ? 1 : 0;   /* tie -> 0, deterministic */
+}
+function ensemblePredict(members, k){
+  return function(x, y){
+    var votes = [];
+    for (var i = 0; i < k; i++) votes.push(stumpPredict(members[i].stump, x, y));
+    return majority(votes);
+  };
+}
+function accuracyOf(predict){
+  var ok = 0;
+  for (var i = 0; i < TEST.length; i++)
+    if (predict(TEST[i].x, TEST[i].y) === TEST[i].label) ok++;
+  return ok / TEST.length;
+}
+function oobAccuracy(members, k){
+  var ok = 0, tot = 0;
+  for (var i = 0; i < TRAIN_N; i++){
+    var votes = [];
+    for (var j = 0; j < k; j++)
+      if (!members[j].seen[i]) votes.push(stumpPredict(members[j].stump, TRAIN[i].x, TRAIN[i].y));
+    if (!votes.length) continue;
+    if (majority(votes) === TRAIN[i].label) ok++;
+    tot++;
+  }
+  return tot ? ok / tot : NaN;
+}
+
+/* ============ state & wiring ============ */
+var state = { n: 21, frac: 0.60, boot: true, draw: 0, probe: { x: 0.72, y: 0.30 } };
+var members = buildMembers(state.draw, state.frac, state.boot);
+var baseStump = trainStump(TRAIN);
+var $ = function(id){ return document.getElementById(id); };
+
+function fmt(a){ return isNaN(a) ? "—" : (100 * a).toFixed(1) + "%"; }
+
+function refresh(){
+  var k = state.n;
+  var ens = ensemblePredict(members, k);
+  var ensAcc = accuracyOf(ens);
+  var baseAcc = accuracyOf(function(x, y){ return stumpPredict(baseStump, x, y); });
+  var meanMem = 0;
+  for (var i = 0; i < k; i++)
+    meanMem += accuracyOf((function(m){ return function(x, y){ return stumpPredict(m.stump, x, y); }; })(members[i]));
+  meanMem /= k;
+  $("stBase").textContent = fmt(baseAcc);
+  $("stMean").textContent = fmt(meanMem);
+  $("stEns").textContent  = fmt(ensAcc);
+  $("stOob").textContent  = fmt(oobAccuracy(members, k));
+
+  /* stability: same settings, 5 fresh bootstrap draws */
+  var accs = [];
+  for (var r = 0; r < 5; r++){
+    var alt = buildMembers(state.draw + 1000 * (r + 1), state.frac, state.boot);
+    accs.push(accuracyOf(ensemblePredict(alt, k)));
+  }
+  var mu = accs.reduce(function(a, b){ return a + b; }, 0) / accs.length;
+  var sd = Math.sqrt(accs.reduce(function(a, b){ return a + (b - mu) * (b - mu); }, 0) / accs.length);
+  $("stStab").textContent = (100 * mu).toFixed(1) + "% ± " + (100 * sd).toFixed(1) + "%";
+
+  drawMain(ens, k);
+  drawCurve();
+  drawVotes(k);
+}
+
+function drawMain(ens, k){
+  var cv = $("cv"), ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  /* majority-vote regions on a coarse grid */
+  var G = 64, cw = W / G, ch = H / G;
+  for (var i = 0; i < G; i++) for (var j = 0; j < G; j++){
+    var p = ens((i + 0.5) / G, 1 - (j + 0.5) / G);
+    ctx.fillStyle = p ? "rgba(251,191,36,0.20)" : "rgba(56,189,248,0.20)";
+    ctx.fillRect(i * cw, j * ch, cw + 1, ch + 1);
+  }
+  /* training points */
+  for (var q = 0; q < TRAIN_N; q++){
+    var pt = TRAIN[q];
+    ctx.beginPath();
+    ctx.arc(pt.x * W, (1 - pt.y) * H, 4.5, 0, 2 * Math.PI);
+    ctx.fillStyle = pt.label ? "#fbbf24" : "#38bdf8";
+    ctx.fill();
+    ctx.strokeStyle = "#0b1220"; ctx.lineWidth = 1; ctx.stroke();
+  }
+  /* probe */
+  var px = state.probe.x * W, py = (1 - state.probe.y) * H;
+  ctx.beginPath(); ctx.arc(px, py, 9, 0, 2 * Math.PI);
+  ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.beginPath(); ctx.arc(px, py, 3, 0, 2 * Math.PI);
+  ctx.fillStyle = "#e2e8f0"; ctx.fill();
+}
+
+function drawVotes(k){
+  var box = $("voteChips"); box.innerHTML = "";
+  var votes = [], ones = 0, show = Math.min(k, 25);
+  for (var i = 0; i < k; i++){
+    var v = stumpPredict(members[i].stump, state.probe.x, state.probe.y);
+    votes.push(v); if (v) ones++;
+  }
+  for (var i = 0; i < show; i++){
+    var s = document.createElement("span");
+    s.className = "chip " + (votes[i] ? "c1" : "c0");
+    s.textContent = votes[i];
+    s.title = "member " + (i + 1) + " votes " + votes[i];
+    box.appendChild(s);
+  }
+  if (k > show){
+    var more = document.createElement("span");
+    more.style.cssText = "font-size:12px;color:#94a3b8;margin-left:6px";
+    more.textContent = "+" + (k - show) + " more";
+    box.appendChild(more);
+  }
+  var pred = majority(votes), truth = trueLabel(state.probe.x, state.probe.y);
+  var ok = pred === truth;
+  $("voteTally").innerHTML =
+    "<b>" + ones + "</b> of <b>" + k + "</b> members vote class 1 &rarr; " +
+    "ensemble says <b>" + pred + "</b> " +
+    '<span class="' + (ok ? "verdict-ok" : "verdict-bad") + '">' +
+    (ok ? "✓ matches" : "✗ misses") + "</span> the true label <b>" + truth + "</b>";
+}
+
+function drawCurve(){
+  var cv = $("curve"), ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  var PADL = 44, PADR = 10, PADT = 12, PADB = 26;
+  var ks = [];
+  for (var n = 1; n <= MAXM; n += 2) ks.push(n);
+  var ensAcc = ks.map(function(k){ return accuracyOf(ensemblePredict(members, k)); });
+  var meanMem = 0;
+  for (var i = 0; i < MAXM; i++)
+    meanMem += accuracyOf((function(m){ return function(x, y){ return stumpPredict(m.stump, x, y); }; })(members[i]));
+  meanMem /= MAXM;
+  var baseAcc = accuracyOf(function(x, y){ return stumpPredict(baseStump, x, y); });
+
+  var lo = 0.55, hi = 1.0;
+  function X(n){ return PADL + (n - 1) / (MAXM - 1) * (W - PADL - PADR); }
+  function Y(a){ return H - PADB - (a - lo) / (hi - lo) * (H - PADT - PADB); }
+
+  ctx.strokeStyle = "#334155"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PADL, PADT - 4); ctx.lineTo(PADL, H - PADB);
+  ctx.lineTo(W - PADR + 4, H - PADB); ctx.stroke();
+  ctx.fillStyle = "#94a3b8"; ctx.font = "11px system-ui";
+  for (var t = 60; t <= 100; t += 10){
+    ctx.fillText(t + "%", 6, Y(t / 100) + 4);
+    ctx.strokeStyle = "#1e293b";
+    ctx.beginPath(); ctx.moveTo(PADL, Y(t / 100)); ctx.lineTo(W - PADR, Y(t / 100)); ctx.stroke();
+  }
+  for (var n = 1; n <= MAXM; n += 10) ctx.fillText("n=" + n, X(n) - 10, H - 8);
+
+  function line(vals, color, width, dash){
+    ctx.save();
+    ctx.strokeStyle = color; ctx.lineWidth = width;
+    ctx.setLineDash(dash || []);
+    ctx.beginPath();
+    for (var i = 0; i < ks.length; i++){
+      var px = X(ks[i]), py = Y(vals[i]);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke(); ctx.restore();
+  }
+  function hline(a, color, dash){
+    ctx.save();
+    ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.setLineDash(dash);
+    ctx.beginPath(); ctx.moveTo(PADL, Y(a)); ctx.lineTo(W - PADR, Y(a)); ctx.stroke();
+    ctx.restore();
+  }
+  hline(meanMem, "#94a3b8", [6, 4]);
+  hline(baseAcc, "#f472b6", [6, 4]);
+  line(ensAcc, "#38bdf8", 3);
+  /* current n marker */
+  ctx.save();
+  ctx.strokeStyle = "#e2e8f0"; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(X(state.n), PADT); ctx.lineTo(X(state.n), H - PADB); ctx.stroke();
+  ctx.restore();
+}
+
+$("nSlider").addEventListener("input", function(e){
+  state.n = parseInt(e.target.value, 10);
+  $("nVal").textContent = state.n;
+  refresh();
+});
+$("fSlider").addEventListener("input", function(e){
+  state.frac = parseFloat(e.target.value);
+  $("fVal").textContent = state.frac.toFixed(2);
+  members = buildMembers(state.draw, state.frac, state.boot);
+  refresh();
+});
+$("bootChk").addEventListener("change", function(e){
+  state.boot = e.target.checked;
+  members = buildMembers(state.draw, state.frac, state.boot);
+  refresh();
+});
+$("resample").addEventListener("click", function(){
+  state.draw++;
+  members = buildMembers(state.draw, state.frac, state.boot);
+  refresh();
+});
+$("probeBtn").addEventListener("click", function(){
+  var r = mulberry32(seedFrom(7, state.draw, Math.floor(Math.random() * 1e9) % 100000));
+  state.probe = { x: 0.05 + 0.9 * r(), y: 0.05 + 0.9 * r() };
+  refresh();
+});
+$("cv").addEventListener("click", function(e){
+  var r = $("cv").getBoundingClientRect();
+  state.probe = {
+    x: (e.clientX - r.left) / r.width,
+    y: 1 - (e.clientY - r.top) / r.height
+  };
+  refresh();
+});
+
+refresh();
+
+/* expose pure math for automated sanity checks */
+(typeof window !== "undefined" ? window : globalThis).__ml = {
+  mulberry32: mulberry32, seedFrom: seedFrom, trainStump: trainStump,
+  stumpPredict: stumpPredict, sampleIdx: sampleIdx, majority: majority,
+  buildMembers: buildMembers, oobAccuracy: oobAccuracy, accuracyOf: accuracyOf,
+  ensemblePredict: ensemblePredict, TRAIN: TRAIN, TEST: TEST,
+  baseStump: baseStump, TRAIN_N: TRAIN_N
+};
+</script>
+</body>
+</html>

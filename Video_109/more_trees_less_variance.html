@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>More trees, less variance — watch the 1/m fall</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 760px; margin: 24px auto; padding: 0 16px; line-height: 1.5; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #64748b; margin-top: 0; }
+  .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; margin-right: 8px; }
+  button.ghost { background: #e2e8f0; color: #0f172a; }
+  button:disabled { opacity: .5; cursor: default; }
+  canvas { width: 100%; height: 400px; border: 1px solid #e2e8f0; border-radius: 10px; }
+  .controls { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+  .controls label { font-size: 14px; }
+  input[type=range] { vertical-align: middle; }
+  .readout { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+  .pill { border: 1px solid #cbd5e1; border-radius: 10px; padding: 8px 12px;
+          font-size: 14px; min-width: 200px; }
+  .pill b { font-size: 18px; }
+  .note { font-size: 13px; color: #64748b; }
+  .big { font-size: 20px; font-weight: 700; }
+</style>
+</head>
+<body>
+<h2>🌲 More trees, less variance</h2>
+<p class="sub">Each dot below is one <b>forest prediction</b> at the same input x = 2.5, built from trees trained on freshly resampled data. Watch the dots squeeze together as the forest grows: the <b>spread ≈ 1/m</b>, while the centre barely moves — that is variance falling with bias intact.</p>
+
+<div class="card">
+  <div class="controls">
+    <button id="run">▶ Run simulation</button>
+    <button id="reset" class="ghost">Reset</button>
+    <label>Noise σ <input id="noise" type="range" min="0.1" max="0.8" step="0.05" value="0.35">
+      <b id="noiseVal">0.35</b></label>
+  </div>
+  <canvas id="plot" width="720" height="400"></canvas>
+  <div class="readout">
+    <div class="pill">🌳 m = 1 tree<br>variance: <b id="v1">—</b></div>
+    <div class="pill">🌲🌲 m = 10 trees<br>variance: <b id="v10">—</b></div>
+    <div class="pill">🌲×100 forest<br>variance: <b id="v100">—</b></div>
+  </div>
+  <p class="note" id="ratio">Ratios vs 1 tree: —</p>
+  <p class="note">Each world: 1) draw a fresh small dataset (30 points) from the true curve y = sin(1.5x) + noise,
+     2) grow m wiggly trees, each on its own bootstrap sample of just 12 of those points,
+     3) average the m predictions at x = 2.5. <b>40 worlds per lane.</b> Green line = truth.</p>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const WORLDS = 40, N = 30, DEG = 5, X0 = 2.5, TSAMP = 12; // trees train on 12 of the 30 points
+const TRUE = x => Math.sin(1.5 * x);
+const TRUTH = TRUE(X0);
+const MS = [1, 10, 100];
+let results = null; // results[m] = array of WORLDS forest predictions
+
+// gaussian noise (Box-Muller)
+let spare = null;
+function randn() {
+  if (spare !== null) { const v = spare; spare = null; return v; }
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  const r = Math.sqrt(-2 * Math.log(u)), t = 2 * Math.PI * v;
+  spare = r * Math.sin(t);
+  return r * Math.cos(t);
+}
+
+// solve A x = b by Gaussian elimination with partial pivoting
+function solve(A, b) {
+  const n = b.length, M = A.map((row, i) => row.concat([b[i]]));
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    [M[c], M[piv]] = [M[piv], M[c]];
+    const d = M[c][c] || 1e-12;
+    for (let r = c + 1; r < n; r++) {
+      const f = M[r][c] / d;
+      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  const x = new Array(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) {
+    let s = M[r][n];
+    for (let k = r + 1; k < n; k++) s -= M[r][k] * x[k];
+    x[r] = s / (M[r][r] || 1e-12);
+  }
+  return x;
+}
+
+// one wiggly "tree": degree-DEG polynomial fit on a bootstrap sample of pts
+function fitTree(pts) {
+  const p = DEG + 1, XtX = [], Xty = new Array(p).fill(0);
+  for (let i = 0; i < p; i++) XtX.push(new Array(p).fill(0));
+  const samp = [];
+  for (let i = 0; i < TSAMP; i++) samp.push(pts[(Math.random() * pts.length) | 0]);
+  for (const [x, y] of samp) {
+    let pow = 1;
+    const phi = [];
+    for (let j = 0; j < p; j++) { phi.push(pow); pow *= x; }
+    for (let j = 0; j < p; j++) {
+      Xty[j] += phi[j] * y;
+      for (let k = 0; k < p; k++) XtX[j][k] += phi[j] * phi[k];
+    }
+  }
+  for (let j = 0; j < p; j++) XtX[j][j] += 1e-4; // tiny ridge for stability
+  const w = solve(XtX, Xty);
+  let pred = 0, pow = 1;
+  for (let j = 0; j < p; j++) { pred += w[j] * pow; pow *= X0; }
+  return pred;
+}
+
+function variance(a) {
+  const mu = a.reduce((s, v) => s + v, 0) / a.length;
+  return a.reduce((s, v) => s + (v - mu) * (v - mu), 0) / a.length;
+}
+
+function draw() {
+  const cv = $("plot"), ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const pad = 40, laneH = (H - 40) / 3, cx = pad, cw = W - 2 * pad;
+  const all = results ? MS.flatMap(m => results[m]) : [TRUTH];
+  let lo = Math.min(TRUTH, ...all), hi = Math.max(TRUTH, ...all);
+  const span = Math.max(hi - lo, 0.05), m0 = (lo + hi) / 2;
+  lo = m0 - span * 0.6; hi = m0 + span * 0.6;
+  const xOf = v => cx + ((v - lo) / (hi - lo)) * cw;
+
+  MS.forEach((m, li) => {
+    const yT = 20 + li * laneH, yM = yT + laneH / 2;
+    ctx.fillStyle = "#64748b"; ctx.font = "13px sans-serif";
+    ctx.fillText("m = " + m + (m === 1 ? " tree" : " trees"), 6, yM + 4);
+    // truth line
+    ctx.strokeStyle = "#16a34a"; ctx.setLineDash([6, 5]); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(xOf(TRUTH), yT + 8); ctx.lineTo(xOf(TRUTH), yT + laneH - 8); ctx.stroke();
+    ctx.setLineDash([]); ctx.fillStyle = "#16a34a"; ctx.font = "11px sans-serif";
+    ctx.fillText("truth", xOf(TRUTH) + 4, yT + 16);
+    if (results) {
+      const vals = results[m], mu = vals.reduce((s, v) => s + v, 0) / vals.length;
+      const sd = Math.sqrt(variance(vals));
+      // ±1 std band
+      ctx.fillStyle = "rgba(37,99,235,0.15)";
+      ctx.fillRect(xOf(mu - sd), yT + 8, xOf(mu + sd) - xOf(mu - sd), laneH - 16);
+      // dots, seeded jitter so they don't jump between frames
+      vals.forEach((v, i) => {
+        const jj = ((i * 2654435761) % 1000) / 1000 - 0.5; // deterministic pseudo-jitter
+        ctx.fillStyle = m === 1 ? "#f59e0b" : m === 10 ? "#2563eb" : "#7c3aed";
+        ctx.beginPath();
+        ctx.arc(xOf(v), yM + jj * (laneH - 60), 4.5, 0, 2 * Math.PI);
+        ctx.fill();
+      });
+      // mean marker
+      ctx.strokeStyle = "#0f172a"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(xOf(mu), yT + 4); ctx.lineTo(xOf(mu), yT + laneH - 4); ctx.stroke();
+    }
+  });
+  if (!results) {
+    ctx.fillStyle = "#64748b"; ctx.font = "14px sans-serif";
+    ctx.fillText("Press “Run simulation” — 40 fresh datasets, forests of 1 / 10 / 100 trees.", pad + 20, H / 2);
+  }
+}
+
+$("noise").oninput = e => { $("noiseVal").textContent = (+e.target.value).toFixed(2); };
+$("run").onclick = () => {
+  $("run").disabled = true;
+  const sig = +$("noise").value;
+  results = { 1: [], 10: [], 100: [] };
+  let w = 0;
+  const step = () => {
+    // one "world": fresh noisy dataset from the true curve
+    const data = [];
+    for (let i = 0; i < N; i++) {
+      const x = Math.random() * 5;
+      data.push([x, TRUE(x) + sig * randn()]);
+    }
+    for (const m of MS) {
+      let s = 0;
+      for (let t = 0; t < m; t++) s += fitTree(data);
+      results[m].push(s / m); // forest = average of its trees
+    }
+    w++;
+    if (w % 4 === 0 || w === WORLDS) draw();
+    if (w < WORLDS) setTimeout(step, 30);
+    else {
+      $("run").disabled = false;
+      const v = MS.map(m => variance(results[m]));
+      $("v1").textContent = v[0].toFixed(4);
+      $("v10").textContent = v[1].toFixed(4);
+      $("v100").textContent = v[2].toFixed(4);
+      $("ratio").textContent =
+        "Ratios vs 1 tree: 1.00 → " + (v[1] / v[0]).toFixed(2) + " → " + (v[2] / v[0]).toFixed(2) +
+        "   (the ideal 1/m would give 1.00 → 0.10 → 0.01 — averaging really does crush the spread)";
+    }
+  };
+  step();
+};
+$("reset").onclick = () => {
+  results = null;
+  $("v1").textContent = $("v10").textContent = $("v100").textContent = "—";
+  $("ratio").textContent = "Ratios vs 1 tree: —";
+  draw();
+};
+draw();
+</script>
+</body>
+</html>

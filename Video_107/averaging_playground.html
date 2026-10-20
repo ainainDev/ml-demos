@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Averaging playground — why BaggingRegressor shrinks variance</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 760px; margin: 24px auto; padding: 0 16px; line-height: 1.5; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #64748b; margin-top: 0; }
+  .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  .controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; }
+  button.ghost { background: #e2e8f0; color: #0f172a; }
+  input[type=range] { width: 220px; accent-color: #2563eb; }
+  .big { font-size: 20px; font-weight: 700; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 8px; }
+  td, th { border-bottom: 1px solid #e2e8f0; padding: 6px 8px; text-align: left; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .hl { color: #16a34a; } .warn { color: #b45309; }
+  canvas { width: 100%; height: 300px; border: 1px solid #e2e8f0; border-radius: 10px; }
+  .note { font-size: 13px; color: #64748b; }
+  .legend { font-size: 13px; display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; }
+  .sw { display: inline-block; width: 22px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+</style>
+</head>
+<body>
+<h2>🤖 Averaging playground</h2>
+<p class="sub">Each thin blue curve is one wiggly model fitted on a <b>bootstrap sample</b> of the same noisy dataset —
+like the trees inside a <b>BaggingRegressor</b>. The thick green curve is their <b>average</b>.
+Drag the slider: as more models join the average, the prediction stops jumping around.</p>
+
+<div class="card">
+  <div class="controls">
+    <label>Models averaged&nbsp;m = <span class="big" id="mval">25</span>
+      <input type="range" id="m" min="1" max="150" value="25" step="1">
+    </label>
+    <button id="regen">↻ New data &amp; models</button>
+  </div>
+  <canvas id="plot" width="720" height="300"></canvas>
+  <div class="legend">
+    <span><span class="sw" style="background:#93c5fd"></span>single models (bootstrap fits)</span>
+    <span><span class="sw" style="background:#16a34a"></span>bagged = average of the m models</span>
+    <span><span class="sw" style="background:#f59e0b"></span>true function (dashed)</span>
+    <span><span class="sw" style="background:#f472b6"></span>probe x = 6.3</span>
+  </div>
+</div>
+
+<div class="card">
+  <b>Variance readout at the probe point (x = 6.3)</b>
+  <table>
+    <tr><td>Individual predictions of the m models</td><td class="num" id="r_ind"></td></tr>
+    <tr><td>Their spread: std of single models (<b>σ̂</b>)</td><td class="num" id="r_std"></td></tr>
+    <tr><td>Theoretical spread of the average: <b>σ̂ / √m</b></td><td class="num hl" id="r_avg"></td></tr>
+    <tr><td>Bagged prediction at x = 6.3</td><td class="num" id="r_pred"></td></tr>
+    <tr><td>True value at x = 6.3</td><td class="num" id="r_true"></td></tr>
+  </table>
+  <p class="note">The bagged prediction <b>is</b> the mean of the m individual predictions — no voting, just averaging.
+  σ̂/√m is the theoretical spread if the models were independent; bootstrap models overlap a little, so the
+  real gain is slightly smaller, but the shrinkage is real: watch it fall as you drag m from 1 → 150.</p>
+</div>
+
+<script>
+/* ---------- tiny seeded RNG ---------- */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function gaussian(rng) {           // Box–Muller
+  const u1 = Math.max(rng(), 1e-12), u2 = rng();
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+/* ---------- true function ---------- */
+function fTrue(x) { return 3 * Math.sin(0.8 * x) + 0.30 * x; }
+
+/* ---------- polynomial least squares (degree 7) on z in [-1,1] ---------- */
+function gaussSolve(A, b) {        // partial-pivot Gaussian elimination
+  const n = A.length, M = A.map((r, i) => r.concat([b[i]]));
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    const tmp = M[c]; M[c] = M[p]; M[p] = tmp;
+    const d = M[c][c];
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / d;
+      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return M.map((r, i) => r[n] / M[i][i]);
+}
+function fitPoly(xs, ys, deg) {    // returns coefficients for z = (x-5)/5
+  const n = deg + 1, A = [], b = [];
+  for (let j = 0; j < n; j++) { A.push(new Array(n).fill(0)); b.push(0); }
+  for (let i = 0; i < xs.length; i++) {
+    const z = (xs[i] - 5) / 5, pw = [1];
+    for (let p = 1; p <= 2 * deg; p++) pw.push(pw[p - 1] * z);   // need powers 0..2*deg
+    for (let j = 0; j < n; j++) {
+      b[j] += ys[i] * pw[j];
+      for (let k = 0; k < n; k++) A[j][k] += pw[j + k];
+    }
+  }
+  return gaussSolve(A, b);
+}
+function evalPoly(coef, x) {
+  const z = (x - 5) / 5;
+  let y = 0, pw = 1;
+  for (let j = 0; j < coef.length; j++) { y += coef[j] * pw; pw *= z; }
+  return y;
+}
+
+/* ---------- ensemble state ---------- */
+const X0 = 6.3, MAXM = 150, NDATA = 60, DEG = 7;
+let seed = 20261020, models = [], dataX = [], dataY = [], m = 25;
+
+function rebuild() {
+  const rng = mulberry32(seed);
+  dataX = []; dataY = [];
+  for (let i = 0; i < NDATA; i++) {
+    const x = rng() * 10;
+    dataX.push(x); dataY.push(fTrue(x) + gaussian(rng) * 1.2);
+  }
+  models = [];
+  for (let t = 0; t < MAXM; t++) {          // bootstrap: sample with replacement
+    const bx = [], by = [];
+    for (let i = 0; i < NDATA; i++) {
+      const j = Math.floor(rng() * NDATA);
+      bx.push(dataX[j]); by.push(dataY[j]);
+    }
+    models.push(fitPoly(bx, by, DEG));
+  }
+  refresh();
+}
+
+function predictAt(coef, x) { return evalPoly(coef, x); }
+
+function ensembleStats(mm) {
+  const preds = [];
+  for (let t = 0; t < mm; t++) preds.push(predictAt(models[t], X0));
+  const mean = preds.reduce((a, b) => a + b, 0) / mm;   // averaging = the mean
+  // single-model spread is estimated from a fixed reference batch of 50 models,
+  // so it stays meaningful (and stable) even when the slider is at m = 1
+  const K = 50, ref = [];
+  for (let t = 0; t < K; t++) ref.push(predictAt(models[t], X0));
+  const rmean = ref.reduce((a, b) => a + b, 0) / K;
+  let v = 0;
+  for (const p of ref) v += (p - rmean) * (p - rmean);
+  const std = Math.sqrt(v / K);
+  return { preds, mean, std };
+}
+
+function refresh() {
+  document.getElementById('mval').textContent = m;
+  const st = ensembleStats(m);
+  document.getElementById('r_ind').textContent =
+    st.preds.slice(0, 6).map(p => p.toFixed(2)).join(', ') + (m > 6 ? ', …' : '');
+  document.getElementById('r_std').textContent = 'σ̂ = ' + st.std.toFixed(3);
+  document.getElementById('r_avg').textContent = 'σ̂/√' + m + ' = ' + (st.std / Math.sqrt(m)).toFixed(3);
+  document.getElementById('r_pred').textContent = st.mean.toFixed(3);
+  document.getElementById('r_true').textContent = fTrue(X0).toFixed(3);
+  draw(st);
+}
+
+function draw(st) {
+  const cv = document.getElementById('plot'), ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const padL = 42, padR = 14, padT = 12, padB = 30;
+  const yMin = -3.5, yMax = 8.5;
+  const X = x => padL + (x / 10) * (W - padL - padR);
+  const Y = y => padT + (1 - (y - yMin) / (yMax - yMin)) * (H - padT - padB);
+
+  // grid + axes
+  ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1; ctx.fillStyle = '#64748b';
+  ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  for (let gx = 0; gx <= 10; gx += 2) {
+    ctx.beginPath(); ctx.moveTo(X(gx), padT); ctx.lineTo(X(gx), H - padB); ctx.stroke();
+    ctx.fillText(String(gx), X(gx), H - padB + 16);
+  }
+  ctx.textAlign = 'right';
+  for (let gy = -2; gy <= 8; gy += 2) {
+    ctx.beginPath(); ctx.moveTo(padL, Y(gy)); ctx.lineTo(W - padR, Y(gy)); ctx.stroke();
+    ctx.fillText(String(gy), padL - 6, Y(gy) + 4);
+  }
+
+  // data points
+  ctx.fillStyle = '#94a3b8';
+  for (let i = 0; i < dataX.length; i++) {
+    ctx.beginPath(); ctx.arc(X(dataX[i]), Y(dataY[i]), 2.6, 0, 7); ctx.fill();
+  }
+
+  // individual models (thin, faint — cap how many we draw for speed)
+  ctx.lineWidth = 1;
+  const show = Math.min(m, 60);
+  for (let t = 0; t < show; t++) {
+    ctx.strokeStyle = 'rgba(147,197,253,0.45)';
+    ctx.beginPath();
+    for (let px = 0; px <= W - padL - padR; px += 4) {
+      const x = (px / (W - padL - padR)) * 10;
+      const y = predictAt(models[t], x);
+      px === 0 ? ctx.moveTo(X(x), Y(y)) : ctx.lineTo(X(x), Y(y));
+    }
+    ctx.stroke();
+  }
+
+  // true function (dashed)
+  ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2; ctx.setLineDash([7, 5]);
+  ctx.beginPath();
+  for (let px = 0; px <= W - padL - padR; px += 4) {
+    const x = (px / (W - padL - padR)) * 10;
+    px === 0 ? ctx.moveTo(X(x), Y(fTrue(x))) : ctx.lineTo(X(x), Y(fTrue(x)));
+  }
+  ctx.stroke(); ctx.setLineDash([]);
+
+  // bagged = average of the m models
+  ctx.strokeStyle = '#16a34a'; ctx.lineWidth = 3.2;
+  ctx.beginPath();
+  for (let px = 0; px <= W - padL - padR; px += 4) {
+    const x = (px / (W - padL - padR)) * 10;
+    let s = 0;
+    for (let t = 0; t < m; t++) s += predictAt(models[t], x);
+    const y = s / m;                                    // the actual average
+    px === 0 ? ctx.moveTo(X(x), Y(y)) : ctx.lineTo(X(x), Y(y));
+  }
+  ctx.stroke();
+
+  // probe line
+  ctx.strokeStyle = '#f472b6'; ctx.lineWidth = 1.6; ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(X(X0), padT); ctx.lineTo(X(X0), H - padB); ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+document.getElementById('m').addEventListener('input', e => {
+  m = parseInt(e.target.value, 10); refresh();
+});
+document.getElementById('regen').addEventListener('click', () => {
+  seed = (seed * 1103515245 + 12345) & 0x7fffffff; rebuild();
+});
+
+rebuild();
+</script>
+</body>
+</html>

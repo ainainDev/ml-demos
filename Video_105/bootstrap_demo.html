@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bootstrap Sampling Visualizer — Bagging, Part 1</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: #0f172a; color: #e2e8f0;
+         max-width: 940px; margin: 24px auto; padding: 0 16px; line-height: 1.5; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #94a3b8; margin-top: 0; }
+  .card { border: 1px solid #334155; border-radius: 12px; padding: 16px;
+          margin: 14px 0; background: #1e293b; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; margin-right: 8px; }
+  button.ghost { background: #334155; color: #e2e8f0; }
+  canvas { width: 100%; border: 1px solid #334155; border-radius: 10px;
+           cursor: crosshair; background: #0f172a; }
+  .note { font-size: 13px; color: #94a3b8; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .badge { font-size: 12.5px; padding: 4px 10px; border-radius: 999px;
+           border: 1px solid #475569; color: #e2e8f0; }
+  .badge.c0 { background: #1e3a8a; border-color: #3b82f6; }
+  .badge.c1 { background: #7c2d12; border-color: #f97316; }
+  .verdict { font-size: 18px; font-weight: 700; margin: 8px 0; }
+  .verdict .c0 { color: #60a5fa; } .verdict .c1 { color: #fb923c; }
+  .verdict .tie { color: #facc15; }
+  .bar { height: 22px; border-radius: 6px; background: #334155; margin: 6px 0;
+         position: relative; overflow: hidden; }
+  .bar > div { height: 100%; border-radius: 6px; }
+  .bar span { position: absolute; left: 8px; top: 2px; font-size: 12.5px;
+              color: #e2e8f0; }
+  input[type=range] { width: 180px; accent-color: #2563eb; }
+  b.lbl { color: #e2e8f0; }
+</style>
+</head>
+<body>
+<h2>🎯 Bootstrap sampling: the engine of bagging</h2>
+<p class="sub">A tiny 1-D classification problem (true boundary at x = 5, a little noise).
+Each "stump" is trained on its <b>own bootstrap sample</b> — 24 rows drawn
+<b>with replacement</b> from the same data. Watch how the stumps disagree… and how
+the <b>majority vote</b> smooths them out.</p>
+
+<div class="card">
+  <div class="row">
+    <button id="resample">🔁 Draw new bootstrap samples</button>
+    <button id="reset" class="ghost">Reset</button>
+    <label><b class="lbl">Stumps (M):</b> <input type="range" id="m" min="1" max="25" value="9">
+    <b class="lbl" id="mval">9</b></label>
+  </div>
+  <p class="note">Sampling is <b>with replacement</b>: each stump's sample misses some points and repeats others — that is where the disagreement comes from. Stumps retrain automatically when you change M.</p>
+</div>
+
+<div class="card">
+  <b class="lbl">Each stump's decision threshold (dashed lines)</b>
+  <canvas id="plot" width="920" height="250"></canvas>
+  <p class="note">🟡 Click / drag on the plot to move the <b>probe point</b>. Each dashed line is one stump's learned threshold — notice how they scatter around x = 5.</p>
+</div>
+
+<div class="card">
+  <b class="lbl">Majority vote at probe x = <span id="px">5.00</span></b>
+  <div class="badges" id="votes"></div>
+  <div class="verdict" id="verdict"></div>
+  <p class="note">With an even M a tie is possible — the verdict says so honestly instead of guessing.</p>
+</div>
+
+<div class="card">
+  <b class="lbl">Why vote? — accuracy on 60 unseen test points</b>
+  <div class="bar"><div id="bsingle" style="width:0%;background:#3b82f6"></div><span id="tsingle"></span></div>
+  <div class="bar"><div id="bbagged" style="width:0%;background:#22c55e"></div><span id="tbagged"></span></div>
+  <p class="note">Blue = average accuracy of the <b>individual</b> stumps. Green = accuracy of their <b>majority vote</b>. The vote is rarely worse — and usually better — than the average stump.</p>
+</div>
+
+<script>
+// ---------- seeded PRNG (fixed dataset & test set, random bootstrap draws) ----------
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+const rng = mulberry32(20260312);
+
+// ---------- data: 24 train points, 60 test points, boundary at 5, noisy near it ----------
+function trueLabel(x){ return x < 5 ? 0 : 1; }
+function noisyLabel(x){
+  let y = trueLabel(x);
+  const d = Math.abs(x - 5);                 // flip prob. rises near the boundary
+  if (d < 1.2 && rng() < 0.45 * (1 - d / 1.2)) y = 1 - y;
+  return y;
+}
+const train = [], test = [];
+for (let i = 0; i < 24; i++){ const x = +(rng() * 10).toFixed(2); train.push({x, y: noisyLabel(x)}); }
+for (let i = 0; i < 60; i++){ const x = +(rng() * 10).toFixed(2); test.push({x, y: noisyLabel(x)}); }
+
+// ---------- decision stump: best threshold on a sample (min sample errors) ----------
+function trainStump(sample){
+  const xs = [...new Set(sample.map(p => p.x))].sort((a, b) => a - b);
+  let best = {t: 5, left: 0, right: 1, err: Infinity};
+  for (let i = 0; i < xs.length - 1; i++){
+    const t = (xs[i] + xs[i + 1]) / 2;
+    const L = sample.filter(p => p.x < t), R = sample.filter(p => p.x >= t);
+    const left  = L.filter(p => p.y === 1).length >= L.length / 2 ? 1 : 0;
+    const right = R.filter(p => p.y === 1).length >= R.length / 2 ? 1 : 0;
+    const err = L.filter(p => p.y !== left).length + R.filter(p => p.y !== right).length;
+    if (err < best.err) best = {t, left, right, err};
+  }
+  return {t: best.t, predict: x => (x < best.t ? best.left : best.right)};
+}
+
+// ---------- bootstrap: n draws WITH replacement ----------
+function bootstrap(data, n){
+  const s = [];
+  for (let i = 0; i < n; i++) s.push(data[(Math.random() * data.length) | 0]);
+  return s;
+}
+
+// ---------- majority vote (correct for any M; ties reported honestly) ----------
+function majorityVote(preds){
+  const ones = preds.reduce((a, p) => a + p, 0), zeros = preds.length - ones;
+  if (ones > zeros) return {label: 1, ones, zeros, tie: false};
+  if (zeros > ones) return {label: 0, ones, zeros, tie: false};
+  return {label: null, ones, zeros, tie: true};
+}
+
+// ---------- state ----------
+let M = 9, stumps = [], probeX = 5;
+const $ = id => document.getElementById(id);
+const PALETTE = ["#38bdf8","#f472b6","#a3e635","#facc15","#c084fc","#fb7185","#2dd4bf",
+                 "#f97316","#e879f9","#84cc16","#fda4af","#67e8f9","#fde047","#d8b4fe",
+                 "#fca5a5","#5eead4","#fdba74","#f0abfc","#bef264","#fecdd3",
+                 "#a5f3fc","#fef08a","#e9d5ff","#fecaca","#99f6e0"];
+
+function retrain(){
+  M = +$("m").value; $("mval").textContent = M;
+  stumps = [];
+  for (let i = 0; i < M; i++) stumps.push(trainStump(bootstrap(train, train.length)));
+  evaluate(); refresh();
+}
+function accuracy(preds){  // preds: fn -> label, over test set
+  let c = 0;
+  for (const p of test) if (preds(p.x) === p.y) c++;
+  return c / test.length;
+}
+function evaluate(){
+  const single = stumps.reduce((a, s) => a + accuracy(s.predict), 0) / stumps.length;
+  const vote = p => majorityVote(stumps.map(s => s.predict(p.x))).label;
+  const bagged = stumps.length ? accuracy(x => { const v = vote({x}); return v.tie ? -1 : v.label; }) : 0;
+  $("bsingle").style.width = (single * 100).toFixed(1) + "%";
+  $("bbagged").style.width = (bagged * 100).toFixed(1) + "%";
+  $("tsingle").textContent = "avg single stump: " + (single * 100).toFixed(1) + "%";
+  $("tbagged").textContent = "majority vote: " + (bagged * 100).toFixed(1) + "%";
+}
+
+function refresh(){
+  $("px").textContent = probeX.toFixed(2);
+  const preds = stumps.map(s => s.predict(probeX));
+  const vb = $("votes"); vb.innerHTML = "";
+  preds.forEach((p, i) => {
+    const b = document.createElement("span");
+    b.className = "badge c" + p;
+    b.textContent = "S" + (i + 1) + ": class " + p;
+    vb.appendChild(b);
+  });
+  const v = majorityVote(preds);
+  const el = $("verdict");
+  if (v.tie) el.innerHTML = 'Verdict: <span class="tie">TIE — ' + v.ones + " vs " + v.zeros + '</span> (even M can tie; odd M never does)';
+  else el.innerHTML = 'Verdict: <span class="c' + v.label + '">CLASS ' + v.label + '</span> (' + Math.max(v.ones, v.zeros) + " of " + preds.length + " votes)";
+  draw();
+}
+
+function draw(){
+  const cv = $("plot"), ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const padL = 44, padR = 16, padT = 30, padB = 34;
+  const x0 = padL, x1 = W - padR;
+  const X = v => x0 + (v / 10) * (x1 - x0);
+  // axes + ticks
+  ctx.strokeStyle = "#475569"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(x0, H - padB); ctx.lineTo(x1, H - padB); ctx.stroke();
+  ctx.fillStyle = "#94a3b8"; ctx.font = "11px sans-serif"; ctx.textAlign = "center";
+  for (let t = 0; t <= 10; t += 2){
+    ctx.fillText(t, X(t), H - padB + 16);
+    ctx.strokeStyle = "#334155"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(X(t), H - padB); ctx.lineTo(X(t), padT); ctx.stroke();
+  }
+  // true boundary
+  ctx.strokeStyle = "#64748b"; ctx.setLineDash([6, 5]); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(X(5), padT); ctx.lineTo(X(5), H - padB); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#64748b"; ctx.textAlign = "center";
+  ctx.fillText("true boundary x = 5", X(5), padT - 8);
+  // train points: class 0 low lane, class 1 high lane (jittered)
+  const jr = mulberry32(77);
+  train.forEach(p => {
+    const lane = p.y === 0 ? H - padB - 34 : H - padB - 96;
+    const y = lane + (jr() - 0.5) * 26;
+    ctx.beginPath(); ctx.arc(X(p.x), y, 7, 0, 7);
+    ctx.fillStyle = p.y === 0 ? "#3b82f6" : "#f97316";
+    ctx.fill(); ctx.strokeStyle = "#0f172a"; ctx.lineWidth = 2; ctx.stroke();
+  });
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#60a5fa"; ctx.fillText("● class 0", x0, H - 8);
+  ctx.fillStyle = "#fb923c"; ctx.fillText("● class 1", x0 + 76, H - 8);
+  // stump thresholds
+  stumps.forEach((s, i) => {
+    ctx.strokeStyle = PALETTE[i % PALETTE.length]; ctx.lineWidth = 2;
+    ctx.setLineDash([7, 5]);
+    ctx.beginPath(); ctx.moveTo(X(s.t), padT + 6); ctx.lineTo(X(s.t), H - padB); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = PALETTE[i % PALETTE.length]; ctx.font = "10px sans-serif";
+    ctx.textAlign = "center"; ctx.fillText("S" + (i + 1), X(s.t), padT + 2);
+  });
+  // probe
+  ctx.strokeStyle = "#facc15"; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(X(probeX), padT); ctx.lineTo(X(probeX), H - padB); ctx.stroke();
+  ctx.fillStyle = "#facc15"; ctx.beginPath();
+  ctx.arc(X(probeX), H - padB, 6, 0, 7); ctx.fill();
+}
+
+function setProbeFromEvent(e){
+  const cv = $("plot"), r = cv.getBoundingClientRect();
+  const fx = (e.clientX - r.left) / r.width;                 // fraction across CSS box
+  const padL = 44, padR = 16;
+  const inner = (fx * cv.width - padL) / (cv.width - padL - padR);
+  probeX = Math.min(10, Math.max(0, inner * 10));
+  refresh();
+}
+
+let dragging = false;
+$("plot").addEventListener("pointerdown", e => { dragging = true; setProbeFromEvent(e); });
+window.addEventListener("pointermove", e => { if (dragging) setProbeFromEvent(e); });
+window.addEventListener("pointerup", () => dragging = false);
+$("resample").onclick = retrain;
+$("reset").onclick = () => { probeX = 5; retrain(); };
+$("m").oninput = retrain;
+retrain();
+</script>
+</body>
+</html>

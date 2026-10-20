@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bagging vs Random Forest — playground</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 980px; margin: 24px auto; padding: 0 16px; line-height: 1.55; color: #0f172a; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #64748b; margin-top: 0; }
+  .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; }
+  button.ghost { background: #e2e8f0; color: #0f172a; }
+  label { font-size: 14px; }
+  input[type=range] { vertical-align: middle; }
+  .panels { display: flex; gap: 14px; flex-wrap: wrap; }
+  .panel { flex: 1 1 420px; border: 1px solid #cbd5e1; border-radius: 12px; padding: 14px; }
+  .panel h3 { margin: 0 0 2px; font-size: 16px; }
+  .panel .tag { font-size: 12.5px; color: #64748b; margin: 0 0 8px; }
+  canvas { width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 10px; display: block; }
+  .metrics { font-size: 14px; margin: 10px 0 2px; }
+  .metrics b { font-size: 16px; }
+  .verdict { font-size: 15px; background: #f1f5f9; border-radius: 10px; padding: 12px 14px; margin-top: 10px; }
+  .note { font-size: 13.5px; color: #475569; }
+  ul.note { padding-left: 20px; }
+  .legend { font-size: 12.5px; color: #64748b; margin-top: 6px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 3px -1px 8px; }
+</style>
+</head>
+<body>
+<h2>🌳 Bagging vs Random Forest — feel the one extra trick</h2>
+<p class="sub">Both panels train an ensemble of decision <b>stumps</b> (one-split trees) on the same 2-D dataset, where the true boundary is the diagonal <b>x₁ + x₂ = 10</b>. The only difference is the video's key idea, shrunk to miniature: the <b>bagging</b> stumps may split on <b>any</b> feature, while each <b>Random&nbsp;Forest</b> stump must split on <b>one randomly picked</b> feature.</p>
+
+<div class="card">
+  <div class="controls">
+    <label>Trees per ensemble: <b id="ntrees_lab">51</b>
+      <input type="range" id="ntrees" min="1" max="150" value="51" step="2"></label>
+    <button id="retrain">▶ Retrain both</button>
+    <button id="newdata" class="ghost">↻ New dataset</button>
+  </div>
+  <p class="legend"><span class="dot" style="background:#2563eb"></span>class 1 (x₁+x₂&gt;10)
+     <span class="dot" style="background:#dc2626"></span>class 0 · shaded area = ensemble's learned boundary</p>
+</div>
+
+<div class="panels">
+  <div class="panel">
+    <h3>Plain Bagging</h3>
+    <p class="tag">bootstrap rows · every stump sees <b>all</b> features at its split</p>
+    <canvas id="cv_bag" width="480" height="360"></canvas>
+    <p class="metrics">Held-out accuracy: <b id="acc_bag">–</b> · trees disagreeing: <b id="dis_bag">–</b></p>
+  </div>
+  <div class="panel">
+    <h3>Random Forest</h3>
+    <p class="tag">bootstrap rows · every stump sees <b>one random</b> feature at its split</p>
+    <canvas id="cv_rf" width="480" height="360"></canvas>
+    <p class="metrics">Held-out accuracy: <b id="acc_rf">–</b> · trees disagreeing: <b id="dis_rf">–</b></p>
+  </div>
+</div>
+
+<div class="verdict" id="verdict">Training…</div>
+
+<div class="card">
+  <b>What to notice</b>
+  <ul class="note">
+    <li>The Random Forest boundary hugs the diagonal with a finer staircase — many stumps splitting on x₁ and many on x₂ blend into the diagonal shape.</li>
+    <li><b>Trees disagreeing</b> = average share of stumps voting against the ensemble majority on the test set. Random Forest's number is higher — its trees are <b>decorrelated</b>, and decorrelated errors cancel out in the vote.</li>
+    <li>Bagging stumps mostly pick the same "best" feature and threshold, so the ensemble barely beats a single stump.</li>
+    <li>In the video the trees are deep and Random Forest re-samples columns <b>before every node split</b> (not just once per tree). Here each tree is a single stump, so the same idea appears once per stump — the miniature version of the real mechanism.</li>
+  </ul>
+  <p class="note">Press <b>↻ New dataset</b> a few times: Random Forest usually ends up on top, but not on literally every draw — exactly what "usually wins" means in practice.</p>
+</div>
+
+<script>
+// ---- pure core (no DOM) ----
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// dataset: x1,x2 uniform in [0,10]; label 1 iff x1 + x2 > 10
+function genDataset(seed, n) {
+  const rng = mulberry32(seed), X = [], y = [];
+  for (let i = 0; i < n; i++) {
+    const x1 = rng() * 10, x2 = rng() * 10;
+    X.push([x1, x2]); y.push(x1 + x2 > 10 ? 1 : 0);
+  }
+  return { X, y };
+}
+
+// fit one axis-aligned stump on a bootstrap sample; only `features` may be used
+function fitStump(idx, X, y, features) {
+  let best = null;
+  for (const f of features) {
+    const vals = idx.map(i => X[i][f]).sort((a, b) => a - b);
+    // candidate thresholds: midpoints of up to 64 evenly spaced sorted values
+    const step = Math.max(1, Math.floor(vals.length / 64));
+    for (let k = 0; k < vals.length - 1; k += step) {
+      const t = (vals[k] + vals[k + 1]) / 2;
+      if (!(t > vals[0] && t < vals[vals.length - 1])) continue;
+      for (const pol of [1, -1]) {           // pol=1: predict 1 if x>t
+        let correct = 0;
+        for (const i of idx) {
+          const p = (pol === 1 ? X[i][f] > t : X[i][f] <= t) ? 1 : 0;
+          if (p === y[i]) correct++;
+        }
+        const acc = correct / idx.length;
+        if (!best || acc > best.acc) best = { f, t, pol, acc };
+      }
+    }
+  }
+  if (!best) best = { f: features[0], t: 5, pol: 1, acc: 0 }; // constant column fallback
+  return best;
+}
+function predictStump(s, x) { return (s.pol === 1 ? x[s.f] > s.t : x[s.f] <= s.t) ? 1 : 0; }
+
+// mode 'bagging': stump may use any feature. mode 'rf': one random feature per stump.
+function trainEnsemble(X, y, nTrees, mode, rng) {
+  const n = X.length, trees = [];
+  for (let m = 0; m < nTrees; m++) {
+    const idx = [];
+    for (let i = 0; i < n; i++) idx.push(Math.floor(rng() * n));   // bootstrap
+    const features = mode === 'rf' ? [Math.floor(rng() * 2)] : [0, 1];
+    trees.push(fitStump(idx, X, y, features));
+  }
+  return trees;
+}
+function ensemblePredict(trees, x) {
+  let v = 0;
+  for (const s of trees) v += predictStump(s, x);
+  return v > trees.length / 2 ? 1 : 0;
+}
+function accuracy(trees, X, y) {
+  let c = 0;
+  for (let i = 0; i < X.length; i++) if (ensemblePredict(trees, X[i]) === y[i]) c++;
+  return c / X.length;
+}
+// mean share of trees voting against the ensemble majority (0..0.5)
+function disagreement(trees, X) {
+  let tot = 0;
+  for (const x of X) {
+    let v = 0;
+    for (const s of trees) v += predictStump(s, x);
+    tot += Math.min(v, trees.length - v) / trees.length;
+  }
+  return tot / X.length;
+}
+// ---- end pure core / DOM app below ----
+
+const $ = id => document.getElementById(id);
+const N_TRAIN = 220, N_TEST = 400;
+let dataSeed = 20261020, nTrees = 51, train, test, bagTrees, rfTrees;
+
+function drawPanel(cv, trees) {
+  const ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const GX = 60, GY = 45, cw = W / GX, ch = H / GY;
+  for (let gx = 0; gx < GX; gx++) for (let gy = 0; gy < GY; gy++) {
+    const x1 = (gx + 0.5) / GX * 10, x2 = 10 - (gy + 0.5) / GY * 10;
+    const p = ensemblePredict(trees, [x1, x2]);
+    ctx.fillStyle = p === 1 ? 'rgba(37,99,235,0.20)' : 'rgba(220,38,38,0.20)';
+    ctx.fillRect(gx * cw, gy * ch, cw + 0.5, ch + 0.5);
+  }
+  for (let i = 0; i < train.X.length; i++) {
+    const px = train.X[i][0] / 10 * W, py = H - train.X[i][1] / 10 * H;
+    ctx.beginPath(); ctx.arc(px, py, 3.4, 0, 7);
+    ctx.fillStyle = train.y[i] === 1 ? '#2563eb' : '#dc2626';
+    ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = '#0f172a'; ctx.stroke();
+  }
+}
+
+function retrain() {
+  const rng = mulberry32(dataSeed * 100003 + 7);
+  bagTrees = trainEnsemble(train.X, train.y, nTrees, 'bagging', rng);
+  rfTrees = trainEnsemble(train.X, train.y, nTrees, 'rf', rng);
+  const ab = accuracy(bagTrees, test.X, test.y), ar = accuracy(rfTrees, test.X, test.y);
+  const db = disagreement(bagTrees, test.X), dr = disagreement(rfTrees, test.X);
+  $('acc_bag').textContent = (ab * 100).toFixed(1) + '%';
+  $('acc_rf').textContent = (ar * 100).toFixed(1) + '%';
+  $('dis_bag').textContent = (db * 100).toFixed(1) + '%';
+  $('dis_rf').textContent = (dr * 100).toFixed(1) + '%';
+  drawPanel($('cv_bag'), bagTrees);
+  drawPanel($('cv_rf'), rfTrees);
+  const dAcc = (ar - ab) * 100;
+  const winner = dAcc > 0.05 ? 'Random Forest wins this round'
+    : dAcc < -0.05 ? 'Bagging wins this round (it happens!)' : 'A tie on accuracy this round';
+  $('verdict').innerHTML =
+    `<b>${winner}</b> — accuracy gap ${dAcc >= 0 ? '+' : ''}${dAcc.toFixed(1)} pts, ` +
+    `and the Random Forest trees disagree more (${(dr * 100).toFixed(1)}% vs ${(db * 100).toFixed(1)}%): ` +
+    `extra feature randomness → decorrelated trees → stronger vote.`;
+}
+
+function newDataset() {
+  dataSeed = Math.floor(Math.random() * 1e9);
+  const d = genDataset(dataSeed, N_TRAIN), dt = genDataset(dataSeed + 1, N_TEST);
+  train = d; test = dt;
+  retrain();
+}
+
+$('ntrees').oninput = e => { nTrees = +e.target.value; $('ntrees_lab').textContent = nTrees; retrain(); };
+$('retrain').onclick = retrain;
+$('newdata').onclick = newDataset;
+
+train = genDataset(dataSeed, N_TRAIN);
+test = genDataset(dataSeed + 1, N_TEST);
+retrain();
+</script>
+</body>
+</html>

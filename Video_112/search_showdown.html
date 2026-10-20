@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GridSearch vs RandomizedSearch — the showdown</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: #0f172a; color: #e2e8f0;
+         max-width: 760px; margin: 24px auto; padding: 0 16px; line-height: 1.5; }
+  h2 { margin-bottom: 4px; color: #fff; }
+  .sub { color: #94a3b8; margin-top: 0; }
+  .card { border: 1px solid #334155; border-radius: 12px; padding: 16px;
+          margin: 14px 0; background: #1e293b; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; margin: 4px 8px 4px 0; }
+  button.orange { background: #d97706; }
+  button.ghost { background: #475569; }
+  button:disabled { opacity: .45; cursor: default; }
+  canvas { width: 100%; height: auto; border: 1px solid #334155; border-radius: 10px;
+           display: block; background: #0f172a; }
+  .controls { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
+  .controls label { font-size: 14px; color: #cbd5e1; }
+  .controls output { font-weight: 700; color: #fff; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  td, th { border-bottom: 1px solid #334155; padding: 6px 8px; text-align: left; }
+  th { color: #94a3b8; font-weight: 600; }
+  .bar { height: 8px; border-radius: 4px; background: #0f172a; margin-top: 4px; }
+  .bar > div { height: 100%; border-radius: 4px; width: 0%; }
+  .g { color: #22d3ee; } .r { color: #f59e0b; }
+  .note { font-size: 13px; color: #94a3b8; }
+  .verdict { font-size: 16px; font-weight: 600; color: #fbbf24; }
+  .badge { display:inline-block; font-size:12px; padding:2px 8px; border-radius:999px;
+            background:#334155; color:#e2e8f0; margin-left:8px; vertical-align:middle; }
+</style>
+</head>
+<body>
+<h2>⚔️ GridSearch vs RandomizedSearch <span class="badge">race simulator</span></h2>
+<p class="sub">Both searchers hunt the best two hyperparameters on a
+<b>synthetic, illustrative score surface</b> (a smooth landscape invented for this demo —
+<b>not</b> real model data from the video). Brighter = better score. Each combo is
+judged with 5-fold cross-validation, so every combo costs <b>5 fits</b>.</p>
+
+<div class="card">
+  <div class="controls">
+    <label>n_iter (random combos): <output id="niterOut">10</output><br>
+      <input id="niter" type="range" min="1" max="100" value="10"></label>
+    <label>speed: <output id="speedOut">4</output>×<br>
+      <input id="speed" type="range" min="1" max="12" value="4"></label>
+    <label><input id="showOpt" type="checkbox" checked> show true optimum ★</label>
+  </div>
+  <p style="margin-top:10px">
+    <button id="runGrid">▶ Run GridSearch (100 combos)</button>
+    <button id="runRandom" class="orange">▶ Run RandomizedSearch</button>
+    <button id="race" style="background:#16a34a">🏁 Race them!</button>
+    <button id="reset" class="ghost">Reset</button>
+  </p>
+  <canvas id="plot" width="720" height="440"></canvas>
+  <p class="note">★ gold star = the landscape's true best point (found by a fine scan before the race).
+  Cyan dots = grid combos tried; orange dots = random combos tried.</p>
+</div>
+
+<div class="card">
+  <b>Live scoreboard</b>
+  <table>
+    <thead><tr><th>Method</th><th>Combos tried</th><th>Fits spent</th><th>Best score so far</th></tr></thead>
+    <tbody>
+      <tr><td class="g">GridSearchCV</td><td id="gCount">0 / 100</td><td id="gFits">0</td><td id="gBest">—</td></tr>
+      <tr><td colspan="4"><div class="bar"><div id="gBar" style="background:#22d3ee"></div></div></td></tr>
+      <tr><td class="r">RandomizedSearchCV</td><td id="rCount">0 / 10</td><td id="rFits">0</td><td id="rBest">—</td></tr>
+      <tr><td colspan="4"><div class="bar"><div id="rBar" style="background:#f59e0b"></div></div></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <b>The lesson</b>
+  <p class="verdict" id="verdict">Press “🏁 Race them!” and watch: grid visits every corner of the
+  space, random darts across it — then compare how much each spent to find its best.</p>
+  <p class="note">Like the video's real demo (108 grid combos = 540 fits vs n_iter=10 =
+  50 fits), random search usually finds a near-optimal combo at a fraction of the cost.
+  The exact numbers differ each random run — try it a few times.</p>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+// ---------- synthetic illustrative score surface (invented, not real data) ----------
+function surface(x, y) {
+  const bump = (cx, cy, spread, w) =>
+    w * Math.exp(-(((x - cx) * (x - cx) + (y - cy) * (y - cy)) / spread));
+  return bump(0.72, 0.31, 0.02, 1.0)
+       + bump(0.25, 0.75, 0.03, 0.5)
+       + bump(0.80, 0.85, 0.05, 0.15);
+}
+
+// true optimum: fine-scan approximation (used only for display/verdict %)
+let OPT = { x: 0.72, y: 0.31, s: 0 };
+(function findOptimum() {
+  for (let i = 0; i <= 400; i++) for (let j = 0; j <= 400; j++) {
+    const x = i / 400, y = j / 400, s = surface(x, y);
+    if (s > OPT.s) OPT = { x, y, s };
+  }
+})();
+
+// ---------- heatmap prerender ----------
+const cv = $("plot"), ctx = cv.getContext("2d");
+const W = cv.width, H = cv.height, PADX = 46, PADY = 34;
+const X0 = PADX, X1 = W - 14, Y0 = H - PADY, Y1 = 12;
+const px = x => X0 + x * (X1 - X0);
+const py = y => Y0 - y * (Y0 - Y1);
+
+function inferno(t) { // cheap inferno-ish ramp, t in [0,1]
+  const stops = [[0,0,4],[31,12,72],[85,15,109],[136,34,106],[186,54,85],
+                 [227,89,51],[249,140,10],[249,201,50],[252,255,164]];
+  const f = Math.min(0.999, Math.max(0, t)) * (stops.length - 1);
+  const i = Math.floor(f), k = f - i, a = stops[i], b = stops[i + 1];
+  return [a[0]+(b[0]-a[0])*k|0, a[1]+(b[1]-a[1])*k|0, a[2]+(b[2]-a[2])*k|0];
+}
+function renderHeatmap() {
+  const off = document.createElement("canvas");
+  off.width = 180; off.height = 100;
+  const octx = off.getContext("2d");
+  const img = octx.createImageData(180, 100);
+  for (let j = 0; j < 100; j++) for (let i = 0; i < 180; i++) {
+    const s = surface(i / 179, 1 - j / 99);
+    const [r, g, b] = inferno(Math.pow(s, 0.7));
+    const k = (j * 180 + i) * 4;
+    img.data[k] = r; img.data[k+1] = g; img.data[k+2] = b; img.data[k+3] = 255;
+  }
+  octx.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(off, X0, Y1, X1 - X0, Y0 - Y1);
+}
+
+// ---------- searchers ----------
+const GRID_N = 10, FOLDS = 5;
+let gridPts = [];
+for (let i = 0; i < GRID_N; i++) for (let j = 0; j < GRID_N; j++)
+  gridPts.push({ x: 0.05 + 0.90 * i / (GRID_N - 1), y: 0.05 + 0.90 * j / (GRID_N - 1) });
+
+let state = null, rafId = null;
+
+function freshState() {
+  const nIter = +$("niter").value;
+  return {
+    grid: { pts: gridPts, i: 0, best: -1, bestPt: null, done: false, total: gridPts.length },
+    rand: { pts: [], i: 0, best: -1, bestPt: null, done: false, total: nIter },
+    showdown: false
+  };
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  renderHeatmap();
+  // frame + axes labels
+  ctx.strokeStyle = "#64748b"; ctx.lineWidth = 1;
+  ctx.strokeRect(X0, Y1, X1 - X0, Y0 - Y1);
+  ctx.fillStyle = "#94a3b8"; ctx.font = "12px sans-serif";
+  ctx.fillText("hyperparameter A →", X0 + 10, H - 10);
+  ctx.save(); ctx.translate(14, Y0 - 10); ctx.rotate(-Math.PI / 2);
+  ctx.fillText("hyperparameter B →", 0, 0); ctx.restore();
+
+  const g = state.grid, r = state.rand;
+  ctx.fillStyle = "#22d3ee";
+  for (let k = 0; k < g.i; k++) { ctx.beginPath(); ctx.arc(px(g.pts[k].x), py(g.pts[k].y), 3.4, 0, 7); ctx.fill(); }
+  ctx.fillStyle = "#f59e0b";
+  for (let k = 0; k < r.i; k++) { ctx.beginPath(); ctx.arc(px(r.pts[k].x), py(r.pts[k].y), 5, 0, 7); ctx.fill(); }
+  // best-found rings
+  if (g.bestPt) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(px(g.bestPt.x), py(g.bestPt.y), 10, 0, 7); ctx.stroke(); }
+  if (r.bestPt) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(px(r.bestPt.x), py(r.bestPt.y), 12, 0, 7); ctx.stroke(); }
+  // true optimum
+  if ($("showOpt").checked) {
+    const ox = px(OPT.x), oy = py(OPT.y);
+    ctx.fillStyle = "#fbbf24"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let k = 0; k < 10; k++) {
+      const rad = k % 2 ? 5 : 11, a = -Math.PI / 2 + k * Math.PI / 5;
+      ctx[k ? "lineTo" : "moveTo"](ox + rad * Math.cos(a), oy + rad * Math.sin(a));
+    }
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+}
+
+function evalPoint(runner, pt) {
+  pt.s = surface(pt.x, pt.y);
+  if (pt.s > runner.best) { runner.best = pt.s; runner.bestPt = pt; }
+}
+
+function updateBoard() {
+  const g = state.grid, r = state.rand;
+  $("gCount").textContent = g.i + " / " + g.total;
+  $("gFits").textContent = g.i * FOLDS;
+  $("gBest").textContent = g.best < 0 ? "—" : g.best.toFixed(4);
+  $("gBar").style.width = (100 * g.i / g.total) + "%";
+  $("rCount").textContent = r.i + " / " + r.total;
+  $("rFits").textContent = r.i * FOLDS;
+  $("rBest").textContent = r.best < 0 ? "—" : r.best.toFixed(4);
+  $("rBar").style.width = (100 * r.i / r.total) + "%";
+}
+
+function step(runner, gen) {
+  const per = +$("speed").value;
+  for (let k = 0; k < per && runner.i < runner.total; k++) {
+    const pt = gen(runner.i);
+    evalPoint(runner, pt);
+    runner.i++;
+    if (runner === state.rand) runner.pts.push(pt);
+  }
+  if (runner.i >= runner.total) runner.done = true;
+}
+
+function verdict() {
+  const g = state.grid, r = state.rand, el = $("verdict");
+  if (!(g.done && r.done)) return;
+  const gFits = g.total * FOLDS, rFits = r.total * FOLDS;
+  const ratio = r.best / g.best, costRatio = rFits / gFits;
+  el.innerHTML =
+    "🏁 <b>GridSearch</b>: best score " + g.best.toFixed(4) + " for " + gFits + " fits. " +
+    "<b>RandomizedSearch</b> (n_iter=" + r.total + "): best score " + r.best.toFixed(4) +
+    " for " + rFits + " fits — that is <b>" + (100 * ratio).toFixed(1) + "%</b> of grid's " +
+    "best quality at <b>" + (100 * costRatio).toFixed(1) + "%</b> of the cost. " +
+    "Cheap darts beat the exhaustive comb when compute is the bottleneck.";
+}
+
+function tick() {
+  const g = state.grid, r = state.rand;
+  const active = state.showdown ? [g, r] : [state.activeRunner];
+  let allDone = true;
+  for (const runner of active) {
+    if (!runner.done) {
+      step(runner, runner === g
+        ? i => g.pts[i]
+        : () => ({ x: Math.random(), y: Math.random() }));
+      if (!runner.done) allDone = false;
+    }
+  }
+  draw(); updateBoard();
+  if (state.showdown) verdict();
+  if (allDone) { rafId = null; setButtons(true); return; }
+  rafId = requestAnimationFrame(tick);
+}
+
+function setButtons(on) {
+  ["runGrid", "runRandom", "race"].forEach(id => $(id).disabled = !on);
+}
+
+function start(mode) {
+  stop();
+  state = freshState();
+  state.showdown = (mode === "race");
+  if (mode === "grid") state.activeRunner = state.grid;
+  if (mode === "random") state.activeRunner = state.rand;
+  if (mode === "random") state.grid.done = true;
+  if (mode === "grid") state.rand.done = true;
+  $("verdict").textContent = "Racing… watch the counters.";
+  setButtons(false);
+  draw(); updateBoard();
+  rafId = requestAnimationFrame(tick);
+}
+
+function stop() { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } }
+
+$("runGrid").onclick = () => start("grid");
+$("runRandom").onclick = () => start("random");
+$("race").onclick = () => start("race");
+$("reset").onclick = () => { stop(); state = freshState();
+  state.grid.done = true; state.rand.done = true;
+  $("verdict").textContent = "Press “🏁 Race them!” and watch: grid visits every corner of the space, random darts across it — then compare how much each spent to find its best.";
+  setButtons(true); draw(); updateBoard(); };
+$("niter").oninput = e => { $("niterOut").textContent = e.target.value;
+  $("rCount").textContent = "0 / " + e.target.value; };
+$("speed").oninput = e => $("speedOut").textContent = e.target.value;
+$("showOpt").onchange = () => { if (state) draw(); };
+
+state = freshState();
+state.grid.done = true; state.rand.done = true;
+draw(); updateBoard();
+</script>
+</body>
+</html>
