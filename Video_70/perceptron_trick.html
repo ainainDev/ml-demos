@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Perceptron Trick — watch the line learn</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 780px; margin: 24px auto; padding: 0 16px; line-height: 1.5;
+         background: #0f172a; color: #e2e8f0; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #94a3b8; margin-top: 0; }
+  .card { border: 1px solid #334155; border-radius: 12px; padding: 16px;
+          margin: 14px 0; background: #1e293b; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; margin-right: 8px;
+           margin-bottom: 6px; }
+  button.ghost { background: #334155; color: #e2e8f0; }
+  button:disabled { opacity: .5; cursor: default; }
+  canvas { width: 100%; height: 380px; border: 1px solid #334155;
+           border-radius: 10px; background: #0f172a; }
+  .stats { display: flex; gap: 22px; flex-wrap: wrap; margin: 10px 0; font-size: 15px; }
+  .stats b { font-size: 20px; }
+  #ep { color: #22d3ee; } #miss { color: #f87171; } #done { color: #4ade80; }
+  .ctl { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  .ctl label { font-size: 14px; color: #cbd5e1; }
+  input[type=range] { width: 150px; }
+  #lrVal { font-weight: 700; color: #22d3ee; }
+  .note { font-size: 13px; color: #94a3b8; }
+  .rule { font-size: 17px; font-weight: 700; text-align: center; margin: 6px 0; }
+  .rule .w { color: #fbbf24; }
+  .legend { font-size: 13px; color: #94a3b8; margin-top: 6px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+         margin: 0 4px 0 14px; vertical-align: baseline; }
+</style>
+</head>
+<body>
+<h2>🧠 The Perceptron Trick — watch the line learn</h2>
+<p class="sub">Green = placed, blue = not placed (CGPA vs IQ).
+The line starts <b>random</b>. Each <b>Step</b> picks one random student:
+if the line is wrong about them, it nudges toward them —
+<b>w ← w + η·(y−ŷ)·x</b>. Run until nobody is misclassified.</p>
+
+<div class="card">
+  <div class="stats">
+    <span>Steps <b id="ep">0</b></span>
+    <span>Misclassified <b id="miss">–</b></span>
+    <span id="done"></span>
+  </div>
+  <div class="rule">w = [<span class="w" id="w0">?.??</span>,
+                        <span class="w" id="w1">?.??</span>,
+                        <span class="w" id="w2">?.??</span>]</div>
+  <canvas id="plot" width="720" height="380"></canvas>
+  <div class="legend">
+    <span class="dot" style="background:#4ade80"></span>placed (y=1)
+    <span class="dot" style="background:#60a5fa"></span>not placed (y=0)
+    <span style="margin-left:14px; color:#fbbf24">— decision line</span>
+    <span style="margin-left:14px; color:#f472b6">◎ just-picked point</span>
+  </div>
+</div>
+
+<div class="card">
+  <button id="step">👆 Step (one random student)</button>
+  <button id="auto">▶ Auto-run</button>
+  <button id="reset" class="ghost">🔄 New random line + data</button>
+  <div class="ctl">
+    <label>Learning rate η <input type="range" id="lr" min="0.01" max="0.5" step="0.01" value="0.1">
+    <span id="lrVal">0.10</span></label>
+  </div>
+  <p class="note">Auto-run stops at 0 misclassified or 1,000 steps. Tip: run Auto-run, then Reset and try
+  Step-by-step to see individual nudges — notice a correct pick changes nothing (y−ŷ = 0).</p>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const MAX_STEPS = 1000;
+let pts = [], w = [0, 0, 0], steps = 0, lastIdx = -1, timer = null;
+
+// scaled features: fx=(cgpa-7.5)/2 in [-1,1], fy=(iq-110)/30 in [-1,1]
+// true boundary: fy = -0.8*fx  (separable by construction)
+function makeData() {
+  pts = [];
+  for (let c = 0; c < 2; c++) {
+    for (let k = 0; k < 22; k++) {
+      const fx = Math.random() * 2 - 1;
+      const side = c === 1 ? 1 : -1;
+      let fy = -0.8 * fx + side * (0.15 + Math.random() * 0.55);
+      if (fy > 0.98 || fy < -0.98) { k--; continue; }
+      pts.push({ fx, fy, y: c });
+    }
+  }
+}
+const xi = p => [1, p.fx, p.fy];
+const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+const predict = p => dot(w, xi(p)) >= 0 ? 1 : 0;
+const misclassified = () => pts.filter(p => predict(p) !== p.y).length;
+
+function randomW() {
+  w = [Math.random()*2-1, Math.random()*2-1, Math.random()*2-1];
+}
+
+function stepOnce() {
+  const lr = parseFloat($("lr").value);
+  const i = Math.floor(Math.random() * pts.length);
+  const p = pts[i];
+  const yh = predict(p);
+  if (yh !== p.y) {           // the perceptron trick: one rule, no ifs needed
+    const f = lr * (p.y - yh);
+    w = [w[0] + f * 1, w[1] + f * p.fx, w[2] + f * p.fy];
+  }
+  lastIdx = i;
+  steps++;
+  refreshStats();
+  draw();
+}
+
+function refreshStats() {
+  $("ep").textContent = steps;
+  const m = misclassified();
+  $("miss").textContent = m;
+  $("done").textContent = (m === 0 && steps > 0) ? "✅ separated!" : "";
+  $("w0").textContent = w[0].toFixed(2);
+  $("w1").textContent = w[1].toFixed(2);
+  $("w2").textContent = w[2].toFixed(2);
+}
+
+function draw() {
+  const cv = $("plot"), ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const padL = 52, padR = 16, padT = 14, padB = 34;
+  const x0 = padL, x1 = W - padR, y0 = H - padB, y1 = padT;
+  const Xf = fx => x0 + ((fx + 1.15) / 2.3) * (x1 - x0);
+  const Yf = fy => y0 - ((fy + 1.15) / 2.3) * (y0 - y1);
+  // grid + axes labels
+  ctx.strokeStyle = "#1e293b"; ctx.lineWidth = 1;
+  for (let g = -1; g <= 1; g += 0.5) {
+    ctx.beginPath(); ctx.moveTo(Xf(g), y1); ctx.lineTo(Xf(g), y0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x0, Yf(g)); ctx.lineTo(x1, Yf(g)); ctx.stroke();
+  }
+  ctx.fillStyle = "#94a3b8"; ctx.font = "11px sans-serif";
+  for (let c = 5.5; c <= 9.5; c += 1) ctx.fillText(c.toFixed(1), Xf((c-7.5)/2) - 8, y0 + 16);
+  for (let q = 80; q <= 140; q += 20) ctx.fillText(q, 8, Yf((q-110)/30) + 4);
+  ctx.fillText("CGPA →", x1 - 60, y0 + 16);
+  ctx.fillText("IQ", 8, y1 + 2);
+  // decision line: w0 + w1*fx + w2*fy = 0
+  ctx.strokeStyle = "#fbbf24"; ctx.lineWidth = 2.5; ctx.beginPath();
+  let started = false;
+  const lineY = fx => -(w[0] + w[1] * fx) / w[2];
+  if (Math.abs(w[2]) > 1e-6) {
+    for (let fx = -1.15; fx <= 1.1501; fx += 0.05) {
+      const fy = lineY(fx), x = Xf(fx), y = Yf(fy);
+      if (y < y1 - 2 || y > y0 + 2) { started = false; continue; }
+      started ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      started = true;
+    }
+  } else if (Math.abs(w[1]) > 1e-6) {
+    const fx = -w[0] / w[1], x = Xf(fx);
+    ctx.moveTo(x, y1); ctx.lineTo(x, y0); started = true;
+  }
+  if (started) ctx.stroke();
+  // points
+  pts.forEach((p, i) => {
+    ctx.fillStyle = p.y === 1 ? "#4ade80" : "#60a5fa";
+    ctx.beginPath(); ctx.arc(Xf(p.fx), Yf(p.fy), 5, 0, 7); ctx.fill();
+    if (i === lastIdx) {
+      ctx.strokeStyle = "#f472b6"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(Xf(p.fx), Yf(p.fy), 10, 0, 7); ctx.stroke();
+    }
+  });
+}
+
+$("step").onclick = () => { stopAuto(); stepOnce(); };
+$("auto").onclick = () => {
+  if (timer) { stopAuto(); return; }
+  $("auto").textContent = "⏸ Pause";
+  timer = setInterval(() => {
+    stepOnce();
+    if (misclassified() === 0 || steps >= MAX_STEPS) {
+      stopAuto();
+      if (steps >= MAX_STEPS && misclassified() > 0)
+        $("done").textContent = "⏹ 1,000 steps — not separable from this start";
+    }
+  }, 40);
+};
+function stopAuto() { if (timer) { clearInterval(timer); timer = null; $("auto").textContent = "▶ Auto-run"; } }
+$("reset").onclick = () => {
+  stopAuto(); makeData(); randomW(); steps = 0; lastIdx = -1;
+  $("done").textContent = ""; refreshStats(); draw();
+};
+$("lr").oninput = () => { $("lrVal").textContent = parseFloat($("lr").value).toFixed(2); };
+
+makeData(); randomW(); refreshStats(); draw();
+</script>
+</body>
+</html>

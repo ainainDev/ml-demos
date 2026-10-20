@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why Lasso creates sparsity — geometry + soft-thresholding</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 720px; margin: 24px auto; padding: 0 16px; line-height: 1.5; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #64748b; margin-top: 0; }
+  .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  button { font-size: 14px; padding: 8px 14px; border-radius: 10px; border: none;
+           background: #e2e8f0; color: #0f172a; cursor: pointer; margin-right: 8px; }
+  button.on { background: #2563eb; color: #fff; }
+  canvas { width: 100%; height: auto; display: block; border: 1px solid #e2e8f0; border-radius: 10px; }
+  .note { font-size: 13px; color: #64748b; }
+  .ctl { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  input[type=range] { flex: 1; min-width: 200px; }
+  .big { font-size: 17px; font-weight: 700; }
+  .stat { font-size: 15px; margin: 6px 0; }
+  code { background: #f1f5f9; padding: 1px 6px; border-radius: 6px; font-size: 13px; }
+  .zero { color: #dc2626; font-weight: 700; }
+</style>
+</head>
+<body>
+<h2>💠 Why Lasso creates sparsity</h2>
+<p class="sub">Two views of the same fact. <b>Top:</b> the L1 diamond (blue) shrinks as λ grows; the loss contours (ellipses) touch it at a corner — and corners sit on an axis, where one coefficient is <b>exactly</b> zero. <b>Bottom:</b> the soft-thresholding formula for one coefficient, with its λ-wide dead zone shaded.</p>
+
+<div class="card">
+  <div class="ctl">
+    <label for="lslider"><b>λ (lambda)</b></label>
+    <input type="range" id="lslider" min="0" max="3" step="0.05" value="1.2">
+    <span class="big" id="lval">1.20</span>
+  </div>
+  <div class="ctl">
+    <button data-l="0.2">λ = 0.2</button>
+    <button data-l="1.2" class="on">λ = 1.2</button>
+    <button data-l="2.5">λ = 2.5</button>
+  </div>
+</div>
+
+<div class="card">
+  <b>1 · Constraint geometry</b>
+  <canvas id="geo" width="660" height="400"></canvas>
+  <p class="stat" id="geostat"></p>
+  <p class="note">The red × is the unpenalized (least-squares) optimum. The cyan ellipse is the smallest loss contour that still touches the diamond — that touching point is the Lasso solution. Drag λ and watch it stay pinned to the corner.</p>
+</div>
+
+<div class="card">
+  <b>2 · Soft-thresholding: m = sign(num)·max(|num|−λ, 0) / den</b>
+  <canvas id="soft" width="660" height="280"></canvas>
+  <p class="stat" id="softstat"></p>
+  <p class="note">One coefficient, den = 2. The dashed line is λ = 0 (plain least squares). The shaded band is the dead zone: any signal with |num| ≤ λ is clamped to exactly 0. Ridge has no dead zone — its curve is smooth through the origin.</p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const C1=0.3, C2=1.6, A=1.5, B=0.6, DEN=2;
+const floss=(w1,w2)=>((w1-C1)/A)**2+((w2-C2)/B)**2;
+let lam=1.2;
+const dia=()=>1.8-0.5*lam;
+
+function touchPoint(d){
+  let bw=[0,d],bf=1e18;
+  const cn=[[d,0],[0,d],[-d,0],[0,-d]];
+  for(let e=0;e<4;e++){
+    const p=cn[e],q=cn[(e+1)%4];
+    for(let k=0;k<=300;k++){
+      const t=k/300,w1=p[0]+(q[0]-p[0])*t,w2=p[1]+(q[1]-p[1])*t,v=floss(w1,w2);
+      if(v<bf){bf=v;bw=[w1,w2];}
+    }
+  }
+  return {w:bw,fv:bf};
+}
+
+function drawGeo(){
+  const cv=$('geo'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  const mn=-0.7,mx=2.3,pad=44;
+  const sx=(W-2*pad)/(mx-mn), sy=(H-2*pad)/(mx-mn);
+  const X=w1=>pad+(w1-mn)*sx, Y=w2=>H-pad-(w2-mn)*sy;
+  ctx.strokeStyle='#cbd5e1';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(X(0),Y(mn));ctx.lineTo(X(0),Y(mx));ctx.moveTo(X(mn),Y(0));ctx.lineTo(X(mx),Y(0));ctx.stroke();
+  ctx.fillStyle='#64748b';ctx.font='11px sans-serif';
+  ctx.fillText('w1',W-24,Y(0)-6);ctx.fillText('w2',X(0)+6,14);
+  const d=dia();
+  // diamond
+  ctx.beginPath();ctx.moveTo(X(d),Y(0));ctx.lineTo(X(0),Y(d));ctx.lineTo(X(-d),Y(0));ctx.lineTo(X(0),Y(-d));ctx.closePath();
+  ctx.fillStyle='rgba(37,99,235,0.18)';ctx.fill();
+  ctx.strokeStyle='#2563eb';ctx.lineWidth=2.5;ctx.stroke();
+  ctx.fillStyle='#1d4ed8';ctx.font='bold 11px sans-serif';
+  ctx.fillText('L1 diamond  |w1|+|w2| ≤ '+d.toFixed(2),X(0.35),Y(-0.42));
+  // contours
+  const {w,fv}=touchPoint(d);
+  [[fv*0.25,'#cbd5e1',1],[fv*0.55,'#cbd5e1',1],[fv,'#0891b2',3],[fv*1.9,'#cbd5e1',1],[fv*3.4,'#cbd5e1',1]].forEach(([lv,col,lw])=>{
+    ctx.beginPath();
+    ctx.ellipse(X(C1),Y(C2),A*Math.sqrt(lv)*sx,B*Math.sqrt(lv)*sy,0,0,2*Math.PI);
+    ctx.strokeStyle=col;ctx.lineWidth=lw;ctx.stroke();
+  });
+  // optimum
+  ctx.strokeStyle='#dc2626';ctx.lineWidth=2.5;
+  ctx.beginPath();ctx.moveTo(X(C1)-7,Y(C2)-7);ctx.lineTo(X(C1)+7,Y(C2)+7);
+  ctx.moveTo(X(C1)+7,Y(C2)-7);ctx.lineTo(X(C1)-7,Y(C2)+7);ctx.stroke();
+  ctx.fillStyle='#dc2626';ctx.font='11px sans-serif';ctx.fillText('unpenalised optimum',X(C1)+10,Y(C2)-8);
+  // touching point
+  ctx.beginPath();ctx.arc(X(w[0]),Y(w[1]),7,0,2*Math.PI);
+  ctx.fillStyle='#22d3ee';ctx.fill();ctx.strokeStyle='#0f172a';ctx.lineWidth=2;ctx.stroke();
+  ctx.fillStyle='#0f172a';ctx.font='bold 12px sans-serif';
+  ctx.fillText(`Lasso solution (${w[0].toFixed(2)}, ${w[1].toFixed(2)})`,X(w[0])+12,Y(w[1])-10);
+  const isZero=Math.abs(w[0])<1e-9;
+  $('geostat').innerHTML=`Touching point: w1 = <b>${w[0].toFixed(2)}</b>, w2 = <b>${w[1].toFixed(2)}</b> — `+
+    (isZero?`<span class="zero">w1 is EXACTLY 0 → feature 1 dropped. That is sparsity.</span>`
+            :`w1 = ${w[0].toFixed(2)} (corner region — push λ higher to kill it)`);
+}
+
+function drawSoft(){
+  const cv=$('soft'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  const x0=46,x1=W-16,y0=H-32,y1=16;
+  const X=n=>x0+(n+3)/6*(x1-x0), Y=m=>y0-(m+1.6)/3.2*(y0-y1);
+  ctx.strokeStyle='#cbd5e1';ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(x1,y0);ctx.moveTo(x0,y1);ctx.lineTo(x0,y0);ctx.stroke();
+  // dead zone shading
+  ctx.fillStyle='rgba(220,38,38,0.10)';
+  ctx.fillRect(X(-lam),y1,X(lam)-X(-lam),y0-y1);
+  ctx.fillStyle='#dc2626';ctx.font='bold 11px sans-serif';
+  ctx.fillText('dead zone: |num| ≤ λ → m = 0',X(-lam)+6,y1+16);
+  // lambda=0 reference
+  ctx.strokeStyle='#94a3b8';ctx.setLineDash([5,4]);ctx.lineWidth=1.5;ctx.beginPath();
+  for(let k=0;k<=100;k++){const n=-3+6*k/100,m=n/DEN;k?ctx.lineTo(X(n),Y(m)):ctx.moveTo(X(n),Y(m));}
+  ctx.stroke();ctx.setLineDash([]);
+  // current lambda curve
+  ctx.strokeStyle='#2563eb';ctx.lineWidth=3;ctx.beginPath();
+  for(let k=0;k<=400;k++){
+    const n=-3+6*k/400;
+    const m=Math.sign(n)*Math.max(Math.abs(n)-lam,0)/DEN;
+    k?ctx.lineTo(X(n),Y(m)):ctx.moveTo(X(n),Y(m));
+  }
+  ctx.stroke();
+  ctx.fillStyle='#64748b';ctx.font='11px sans-serif';
+  ctx.fillText('num →',x1-44,H-10);ctx.fillText('m',4,y1+4);ctx.fillText('λ=0 (dashed)',x1-120,Y(3/DEN)-24);
+  $('softstat').innerHTML=`Dead zone is <b>${(2*lam).toFixed(2)}</b> wide. Try the worked example: num = 2, den = 2, λ = 1.2 → m = (2−1.2)/2 = <b>0.40</b>. Raise λ past 2 and m snaps to <b>exactly 0</b>.`;
+}
+
+function refresh(){
+  $('lval').textContent=lam.toFixed(2);
+  document.querySelectorAll('[data-l]').forEach(b=>b.classList.toggle('on',Math.abs(+b.dataset.l-lam)<1e-9));
+  drawGeo();drawSoft();
+}
+$('lslider').addEventListener('input',e=>{lam=+e.target.value;refresh();});
+document.querySelectorAll('[data-l]').forEach(b=>b.onclick=()=>{lam=+b.dataset.l;$('lslider').value=lam;refresh();});
+refresh();
+</script>
+</body>
+</html>

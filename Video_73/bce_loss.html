@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Binary Cross-Entropy Loss Explorer</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: #0f172a; color: #f1f5f9;
+         max-width: 760px; margin: 24px auto; padding: 0 16px; line-height: 1.55; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #94a3b8; margin-top: 0; }
+  .card { border: 1px solid #334155; border-radius: 12px; padding: 16px;
+          margin: 14px 0; background: #1e293b; }
+  .card b.head { font-size: 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  td, th { border-bottom: 1px solid #334155; padding: 6px 8px; text-align: center; }
+  th { color: #94a3b8; font-weight: 600; }
+  canvas { width: 100%; height: 300px; border: 1px solid #334155;
+           border-radius: 10px; background: #0f172a; }
+  input[type=range] { width: 100%; margin: 10px 0 4px; accent-color: #38bdf8; }
+  .readout { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+  .pill { flex: 1 1 140px; border: 1px solid #334155; border-radius: 10px;
+          padding: 10px 12px; background: #0f172a; }
+  .pill .lbl { font-size: 12px; color: #94a3b8; }
+  .pill .val { font-size: 22px; font-weight: 700; color: #38bdf8; }
+  .pill.warn .val { color: #f87171; }
+  .interp { margin-top: 10px; font-size: 15px; }
+  .btnrow { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+  button { font-size: 14px; padding: 9px 16px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; }
+  button.ghost { background: #334155; color: #f1f5f9; }
+  button.on { background: #0ea5e9; }
+  .note { font-size: 13px; color: #94a3b8; }
+  .formula { text-align: center; font-size: 18px; margin: 10px 0; color: #e2e8f0; }
+</style>
+</head>
+<body>
+<h2>🤖 Binary Cross-Entropy Loss Explorer</h2>
+<p class="sub">Logistic regression's loss: how much to punish a prediction depends on how <b>confidently wrong</b> (or right) it was. Drag the slider and watch.</p>
+
+<div class="card">
+  <b class="head">Loss curves — drag the predicted probability</b>
+  <p class="formula">loss = −y·log(p) − (1−y)·log(1−p)</p>
+  <canvas id="plot" width="720" height="300"></canvas>
+  <div class="btnrow">
+    <button id="b1" class="on">True class y = 1 (blue curve)</button>
+    <button id="b0" class="ghost">True class y = 0 (orange curve)</button>
+  </div>
+  <label class="note">Predicted probability p = P(class 1): <b id="pval">0.90</b></label>
+  <input id="slider" type="range" min="1" max="99" value="90">
+  <div class="readout">
+    <div class="pill" id="pillLoss"><div class="lbl">Loss at this p</div><div class="val" id="lossv">0.105</div></div>
+    <div class="pill"><div class="lbl">Correct?</div><div class="val" id="correctv">✔ correct</div></div>
+    <div class="pill"><div class="lbl">Confidence</div><div class="val" id="confv">high</div></div>
+  </div>
+  <p class="interp" id="interp"></p>
+</div>
+
+<div class="card">
+  <b class="head">Likelihood showdown — Model 1 vs Model 2 (from the video)</b>
+  <table>
+    <thead><tr><th>Point</th><th>True class</th><th>Model 1: P(true class)</th><th>Model 2: P(true class)</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>1</td><td>0.7</td><td>0.7</td></tr>
+      <tr><td>2</td><td>1</td><td>0.4</td><td>0.6</td></tr>
+      <tr><td>3</td><td>0</td><td>0.4</td><td>0.6</td></tr>
+      <tr><td>4</td><td>0</td><td>0.8</td><td>0.7</td></tr>
+    </tbody>
+  </table>
+  <p class="note" style="margin-top:10px">
+    Likelihood = product of each row's probability.<br>
+    Model 1: 0.7 × 0.4 × 0.4 × 0.8 = <b style="color:#f87171">0.089</b> &nbsp;·&nbsp;
+    Model 2: 0.7 × 0.6 × 0.6 × 0.7 = <b style="color:#4ade80">0.176</b><br>
+    <b style="color:#4ade80">Model 2 wins</b> — it backed the true classes more strongly. Maximum likelihood, in action.
+  </p>
+</div>
+
+<div class="card">
+  <b class="head">Why the log?</b>
+  <p class="note">Multiplying thousands of tiny probabilities makes the product collapse to zero on a computer (underflow).
+  log turns the product into a sum and never changes the winner. Minimizing the negative of that sum is exactly what gradient descent does next.</p>
+</div>
+
+<script>
+let y = 1;  // selected true class
+const $ = id => document.getElementById(id);
+
+function bce(p, yy) {
+  p = Math.min(Math.max(p, 1e-6), 1 - 1e-6);
+  return -(yy * Math.log(p) + (1 - yy) * Math.log(1 - p));
+}
+
+function draw() {
+  const cv = $('plot'), ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const padL = 48, padR = 14, padT = 16, padB = 34;
+  const x0 = padL, x1 = W - padR, y0 = H - padB, y1 = padT;
+  const X = p => x0 + p * (x1 - x0);
+  const YMAX = 5.0;
+  const Y = v => y0 - Math.min(v, YMAX) / YMAX * (y0 - y1);
+
+  // axes
+  ctx.strokeStyle = '#475569'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); ctx.stroke();
+  ctx.fillStyle = '#94a3b8'; ctx.font = '11px sans-serif';
+  ctx.fillText('predicted p →', x1 - 82, H - 10);
+  ctx.fillText('loss', 6, y1 + 8);
+  [0, 1, 2, 3, 4, 5].forEach(v => {
+    ctx.fillText(String(v), x0 - 14, Y(v) + 4);
+    ctx.strokeStyle = '#1e293b'; ctx.beginPath();
+    ctx.moveTo(x0, Y(v)); ctx.lineTo(x1, Y(v)); ctx.stroke();
+  });
+
+  // curves: y=1 -> -log(p) blue ; y=0 -> -log(1-p) orange
+  const curves = [[1, '#38bdf8'], [0, '#f59e0b']];
+  curves.forEach(([yy, col]) => {
+    ctx.strokeStyle = col; ctx.lineWidth = yy === y ? 3 : 1.5;
+    ctx.globalAlpha = yy === y ? 1 : 0.55;
+    ctx.beginPath();
+    for (let i = 0; i <= 400; i++) {
+      const p = 0.005 + i * 0.99 / 400;
+      const v = bce(p, yy);
+      i ? ctx.lineTo(X(p), Y(v)) : ctx.moveTo(X(p), Y(v));
+    }
+    ctx.stroke(); ctx.globalAlpha = 1;
+  });
+  ctx.fillStyle = '#38bdf8'; ctx.fillText('y = 1: −log(p)', x1 - 120, y1 + 16);
+  ctx.fillStyle = '#f59e0b'; ctx.fillText('y = 0: −log(1−p)', x1 - 120, y1 + 32);
+
+  // marker at current p on active curve
+  const p = +$('slider').value / 100;
+  const v = bce(p, y);
+  ctx.fillStyle = y === 1 ? '#38bdf8' : '#f59e0b';
+  ctx.beginPath(); ctx.arc(X(p), Y(v), 7, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#f1f5f9'; ctx.lineWidth = 2; ctx.stroke();
+}
+
+function interp(p, yy) {
+  const loss = bce(p, yy);
+  const correct = (yy === 1 && p >= 0.5) || (yy === 0 && p < 0.5);
+  const conf = Math.abs(p - 0.5) * 2;  // 0..1
+  const confWord = conf > 0.7 ? 'confident' : conf > 0.35 ? 'mildly confident' : 'unsure';
+  if (correct && conf > 0.7) return '✅ ' + 'Confident <b>correct</b> prediction — tiny loss (' + loss.toFixed(3) + '). This is what we want the model to do.';
+  if (correct) return '🟡 Correct but shaky prediction — moderate loss (' + loss.toFixed(3) + '). The model should get more confident.';
+  if (conf > 0.7) return '🔥 Confident <b>wrong</b> prediction — huge loss (' + loss.toFixed(3) + ')! Cross-entropy punishes overconfident mistakes the hardest.';
+  return '🟠 Wrong but unsure prediction — noticeable loss (' + loss.toFixed(3) + '). Less painful than being confidently wrong.';
+}
+
+function refresh() {
+  const p = +$('slider').value / 100;
+  const loss = bce(p, y);
+  $('pval').textContent = p.toFixed(2);
+  $('lossv').textContent = loss.toFixed(3);
+  const correct = (y === 1 && p >= 0.5) || (y === 0 && p < 0.5);
+  $('correctv').textContent = correct ? '✔ correct' : '✘ wrong';
+  $('correctv').style.color = correct ? '#4ade80' : '#f87171';
+  const conf = Math.abs(p - 0.5) * 2;
+  $('confv').textContent = conf > 0.7 ? 'high' : conf > 0.35 ? 'medium' : 'low';
+  $('pillLoss').classList.toggle('warn', loss > 1);
+  $('interp').innerHTML = interp(p, y);
+  draw();
+}
+
+$('slider').oninput = refresh;
+$('b1').onclick = () => { y = 1; $('b1').className = 'on'; $('b0').className = 'ghost'; refresh(); };
+$('b0').onclick = () => { y = 0; $('b0').className = 'ghost'; $('b1').className = 'ghost'; $('b0').className = 'on'; refresh(); };
+refresh();
+</script>
+</body>
+</html>

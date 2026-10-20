@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batch Gradient Descent — Loss Bowl</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background:#0f172a; color:#f1f5f9; }
+  h1 { text-align:center; margin:18px 0 4px; font-size:22px; }
+  .sub { text-align:center; color:#94a3b8; margin:0 12px 14px; font-size:14px; }
+  .sub b { color:#fbbf24; }
+  .wrap { display:flex; flex-wrap:wrap; gap:16px; justify-content:center;
+          padding:0 16px 24px; }
+  canvas { background:#0f172a; border:1px solid #334155; border-radius:10px;
+           max-width:100%; height:auto; }
+  .panel { width:280px; background:#1e293b; border:1px solid #334155;
+           border-radius:10px; padding:16px; }
+  .panel label { display:block; margin-bottom:14px; font-size:14px; color:#cbd5e1; }
+  .panel label span { float:right; color:#fbbf24; font-weight:bold; }
+  .panel input[type=range] { width:100%; margin-top:6px; accent-color:#38bdf8; }
+  .btns { display:flex; gap:8px; margin:6px 0 12px; }
+  button { flex:1; padding:9px 6px; border:none; border-radius:8px; cursor:pointer;
+           font-size:14px; font-weight:bold; color:#0f172a; background:#38bdf8; }
+  button:hover { filter:brightness(1.12); }
+  #reset { background:#475569; color:#f1f5f9; }
+  #rand { width:100%; background:#334155; color:#f1f5f9; margin-top:4px; }
+  .stats { background:#0f172a; border:1px solid #334155; border-radius:8px;
+           padding:10px 12px; font-size:14px; line-height:1.7; margin-bottom:10px; }
+  .stats b { color:#fbbf24; }
+  #msg { color:#f87171; font-weight:bold; }
+  .ok { color:#4ade80 !important; }
+  .note { font-size:12px; color:#94a3b8; margin-top:10px; line-height:1.5; }
+</style>
+</head>
+<body>
+<h1>Batch Gradient Descent</h1>
+<p class="sub">Each step uses the <b>entire dataset</b> &rarr; one update per epoch. Smooth, exact, slow on big data.</p>
+<div class="wrap">
+  <canvas id="cv" width="640" height="520"></canvas>
+  <div class="panel">
+    <label>Learning rate &alpha; <span id="lrVal">0.08</span>
+      <input id="lr" type="range" min="0.01" max="0.90" step="0.01" value="0.08"></label>
+    <label>Epochs <span id="epVal">60</span>
+      <input id="ep" type="range" min="5" max="300" step="5" value="60"></label>
+    <div class="btns">
+      <button id="play">&#9654; Play</button>
+      <button id="step">Step</button>
+      <button id="reset">Reset</button>
+    </div>
+    <div class="stats">
+      Iteration: <b id="it">0</b><br>
+      Loss f(x,y): <b id="loss">&mdash;</b><br>
+      <span id="msg"></span>
+    </div>
+    <button id="rand">&#127922; Randomize start</button>
+    <p class="note">Loss bowl: f(x,y) = x&sup2; + 4y&sup2;. True gradient = (2x, 8y), computed over the
+    <b>full dataset</b> every step. Try &alpha; = 0.5 to see it diverge &mdash; batch GD is only stable with a sane step size.</p>
+  </div>
+</div>
+<script>
+(function(){
+  var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  var W = cv.width, H = cv.height;
+  var XMIN=-6, XMAX=6, YMIN=-4.5, YMAX=4.5;
+  function px(x){ return (x-XMIN)/(XMAX-XMIN)*W; }
+  function py(y){ return H - (y-YMIN)/(YMAX-YMIN)*H; }
+  function loss(x,y){ return x*x + 4*y*y; }
+
+  var trail = [], pos = {x:5.2, y:3.6}, start = {x:5.2, y:3.6};
+  var it = 0, timer = null, diverged = false, done = false;
+
+  var lrEl = document.getElementById('lr'), epEl = document.getElementById('ep');
+  var itEl = document.getElementById('it'), lossEl = document.getElementById('loss'), msgEl = document.getElementById('msg');
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    // contours of x^2+4y^2 = c  -> ellipse rx=sqrt(c), ry=sqrt(c)/2
+    var levels = [0.5,2,5,10,20,40,80,140];
+    ctx.strokeStyle = 'rgba(56,189,248,0.45)'; ctx.lineWidth = 1;
+    ctx.fillStyle = 'rgba(125,211,252,0.55)'; ctx.font = '10px sans-serif';
+    levels.forEach(function(c){
+      var rx = Math.sqrt(c), ry = Math.sqrt(c)/2;
+      ctx.beginPath(); ctx.ellipse(px(0), py(0), (px(rx)-px(0)), (py(0)-py(ry)), 0, 0, Math.PI*2); ctx.stroke();
+      ctx.fillText('c='+c, px(rx*0.72), py(ry*0.72)-4);
+    });
+    // trail
+    if (trail.length > 1){
+      ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 2.2; ctx.beginPath();
+      trail.forEach(function(p,i){ i ? ctx.lineTo(px(p.x),py(p.y)) : ctx.moveTo(px(p.x),py(p.y)); });
+      ctx.stroke();
+    }
+    // optimum
+    ctx.fillStyle = '#22c55e'; ctx.font = 'bold 18px sans-serif';
+    ctx.fillText('\u2605', px(0)-6, py(0)+6);
+    // start
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px(start.x), py(start.y), 5, 0, Math.PI*2); ctx.fill();
+    ctx.font = '11px sans-serif'; ctx.fillText('start', px(start.x)+8, py(start.y)-6);
+    // ball
+    ctx.fillStyle = '#fbbf24'; ctx.beginPath(); ctx.arc(px(pos.x), py(pos.y), 8, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2; ctx.stroke();
+  }
+
+  function updateStats(){
+    itEl.textContent = it;
+    lossEl.textContent = loss(pos.x, pos.y).toFixed(3);
+  }
+
+  function stepOnce(){
+    if (diverged || done) return;
+    var lr = parseFloat(lrEl.value);
+    pos.x -= lr * 2 * pos.x;
+    pos.y -= lr * 8 * pos.y;
+    it++; trail.push({x:pos.x, y:pos.y});
+    if (Math.abs(pos.x) > 9 || Math.abs(pos.y) > 7){
+      diverged = true; stop();
+      msgEl.textContent = '\uD83D\uDCA5 Diverged! Lower the learning rate.'; msgEl.className='';
+    } else if (it >= parseInt(epEl.value,10)){
+      done = true; stop();
+      msgEl.textContent = '\u2713 Converged smoothly to the optimum.'; msgEl.className='ok';
+    }
+    draw(); updateStats();
+  }
+
+  function stop(){ if (timer){ clearInterval(timer); timer=null; document.getElementById('play').innerHTML='&#9654; Play'; } }
+  function reset(){
+    stop(); pos = {x:start.x, y:start.y}; trail = [{x:start.x, y:start.y}];
+    it = 0; diverged = false; done = false;
+    msgEl.textContent=''; msgEl.className='';
+    draw(); updateStats();
+  }
+
+  document.getElementById('play').onclick = function(){
+    if (timer){ stop(); return; }
+    if (diverged || done) reset();
+    this.innerHTML='&#10074;&#10074; Pause';
+    timer = setInterval(stepOnce, 90);
+  };
+  document.getElementById('step').onclick = function(){ stop(); stepOnce(); };
+  document.getElementById('reset').onclick = reset;
+  document.getElementById('rand').onclick = function(){
+    start = {x: 3 + Math.random()*2.5, y: (Math.random()<0.5?-1:1)*(1.5+Math.random()*2)};
+    reset();
+  };
+  lrEl.oninput = function(){ document.getElementById('lrVal').textContent = parseFloat(this.value).toFixed(2); };
+  epEl.oninput = function(){ document.getElementById('epVal').textContent = this.value; };
+
+  reset();
+})();
+</script>
+</body>
+</html>

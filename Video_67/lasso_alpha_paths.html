@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lasso coefficient paths — drag alpha, watch features die</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 720px; margin: 24px auto; padding: 0 16px; line-height: 1.5; }
+  h2 { margin-bottom: 4px; }
+  .sub { color: #64748b; margin-top: 0; }
+  .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; margin-right: 8px; }
+  button.ghost { background: #e2e8f0; color: #0f172a; }
+  canvas { width: 100%; height: auto; display: block; border: 1px solid #e2e8f0; border-radius: 10px; }
+  .note { font-size: 13px; color: #64748b; }
+  .ctl { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  input[type=range] { flex: 1; min-width: 200px; }
+  .big { font-size: 17px; font-weight: 700; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 8px; }
+  td, th { border-bottom: 1px solid #e2e8f0; padding: 6px 8px; text-align: center; }
+  .dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 6px; }
+  .dead { color: #dc2626; font-weight: 700; }
+  .alive { color: #16a34a; font-weight: 700; }
+  code { background: #f1f5f9; padding: 1px 6px; border-radius: 6px; font-size: 13px; }
+</style>
+</head>
+<body>
+<h2>🔍 Lasso coefficient paths</h2>
+<p class="sub">A synthetic dataset with 3 features is generated in your browser: <b>x₁</b> truly drives y (weight 3), <b>x₂</b> truly drives y (weight −2), <b>x₃</b> is pure noise (true weight 0). A real coordinate-descent Lasso is fit for 61 alpha values. Drag the slider and watch the noise feature die first — then everything.</p>
+
+<div class="card">
+  <div class="ctl">
+    <button id="newdata" class="ghost">🎲 New random dataset</button>
+    <label for="aslider"><b>alpha (λ)</b></label>
+    <input type="range" id="aslider" min="0" max="60" step="1" value="19">
+    <span class="big" id="aval">–</span>
+  </div>
+  <canvas id="plot" width="660" height="330"></canvas>
+  <p class="note">Each line is one coefficient's value as alpha grows (log scale). The vertical line is your slider. The horizontal dashed line is zero — once a line touches it, that feature is <b>dropped</b>.</p>
+</div>
+
+<div class="card">
+  <b>Coefficients at the selected alpha</b>
+  <table>
+    <thead><tr><th>Feature</th><th>True weight</th><th>Lasso weight</th><th>Status</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <p class="note" id="summary" style="margin-top:10px"></p>
+  <p class="note">Train R² at this alpha: <b id="r2">–</b> &nbsp;·&nbsp; penalty used: <code>Lasso(alpha=…)</code> with standardized features, matching <code>sklearn.linear_model.Lasso</code>.</p>
+</div>
+
+<div class="card">
+  <b>What to watch</b>
+  <p class="note">Start at alpha = 0 (far left): plain regression, all three features alive — the noise feature x₃ gets a small nonzero weight by pure luck. Drag right: x₃ is the first to snap to <b>exactly</b> 0. Keep dragging: x₂ dies, then x₁. That is automatic feature selection — no separate algorithm, just the L1 tax doing its job.</p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function randn(rng){let u=0,v=0;while(u===0)u=rng();while(v===0)v=rng();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+
+let Xs=[], yc=[], N=0, P=3, alphas=[], W=[], amax=1, seed=20261020;
+const COLS=['#2563eb','#dc2626','#16a34a'], NAMES=['x₁','x₂','x₃'], TRUEW=[3,-2,0];
+
+function genData(s){
+  const rng=mulberry32(s), n=140, p=3, X=[], y=[];
+  for(let i=0;i<n;i++){
+    const x1=randn(rng),x2=randn(rng),x3=randn(rng);
+    X.push([x1,x2,x3]); y.push(3*x1-2*x2+0*x3+0.6*randn(rng));
+  }
+  const mu=[0,0,0],sd=[0,0,0];
+  for(let j=0;j<p;j++){let sm=0;for(let i=0;i<n;i++)sm+=X[i][j];mu[j]=sm/n;}
+  for(let j=0;j<p;j++){let sm=0;for(let i=0;i<n;i++)sm+=(X[i][j]-mu[j])**2;sd[j]=Math.sqrt(sm/n)||1;}
+  Xs=X.map(r=>r.map((v,j)=>(v-mu[j])/sd[j]));
+  const my=y.reduce((a,b)=>a+b,0)/n;
+  yc=y.map(v=>v-my); N=n;
+}
+
+function lassoPath(){
+  const z=[],c0=[];
+  for(let j=0;j<P;j++){let s=0,t=0;for(let i=0;i<N;i++){s+=Xs[i][j]*Xs[i][j];t+=Xs[i][j]*yc[i];}z.push(s/N);c0.push(t/N);}
+  amax=Math.max(...c0.map(Math.abs));
+  const G=60; alphas=[0];
+  for(let k=0;k<G;k++) alphas.push(amax*Math.pow(10,-4*k/(G-1)));
+  W=[]; let w=[0,0,0];
+  for(const a of alphas){
+    for(let it=0;it<3000;it++){
+      let mx=0;
+      for(let j=0;j<P;j++){
+        let rho=0;
+        for(let i=0;i<N;i++){
+          let r=yc[i];
+          for(let k2=0;k2<P;k2++) r-=Xs[i][k2]*w[k2];
+          rho+=Xs[i][j]*(r+Xs[i][j]*w[j]);
+        }
+        rho/=N;
+        const nw=Math.sign(rho)*Math.max(Math.abs(rho)-a,0)/z[j];
+        mx=Math.max(mx,Math.abs(nw-w[j])); w[j]=nw;
+      }
+      if(mx<1e-10) break;
+    }
+    W.push([...w]);
+  }
+}
+
+function draw(){
+  const cv=$('plot'),ctx=cv.getContext('2d'),Wpx=cv.width,H=cv.height;
+  ctx.clearRect(0,0,Wpx,H);
+  const padL=46,padR=14,padT=14,padB=30,x0=padL,x1=Wpx-padR,y0=H-padB,y1=padT;
+  let m=0; W.forEach(w=>w.forEach(v=>{m=Math.max(m,Math.abs(v));})); m*=1.12; if(m<0.05)m=0.05;
+  const Xof=i=>x0+i/(alphas.length-1)*(x1-x0);
+  const Yof=v=>y0-(v+m)/(2*m)*(y0-y1);
+  ctx.strokeStyle='#cbd5e1';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(x1,y0);ctx.moveTo(x0,y1);ctx.lineTo(x0,y0);ctx.stroke();
+  ctx.strokeStyle='#94a3b8';ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(x0,Yof(0));ctx.lineTo(x1,Yof(0));ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle='#64748b';ctx.font='11px sans-serif';
+  [0,15,30,45,60].forEach(i=>{
+    const lbl=i===0?'0':alphas[i].toExponential(0);
+    ctx.fillText(lbl,Xof(i)-8,H-10);
+    ctx.strokeStyle='#e2e8f0';ctx.beginPath();ctx.moveTo(Xof(i),y0);ctx.lineTo(Xof(i),y0+5);ctx.stroke();
+  });
+  ctx.fillText('alpha → (log scale)',x1-120,H-10);
+  ctx.fillText('coef',4,y1+4);
+  ctx.fillText('0',x0-14,Yof(0)+4);
+  for(let j=0;j<P;j++){
+    ctx.strokeStyle=COLS[j];ctx.lineWidth=2.2;ctx.beginPath();
+    W.forEach((w,i)=>{const x=Xof(i),y=Yof(w[j]);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
+    ctx.stroke();
+    ctx.fillStyle=COLS[j];ctx.font='bold 12px sans-serif';
+    ctx.fillText(NAMES[j],x1+2,Yof(W[W.length-1][j])-2);
+  }
+  const si=+$('aslider').value, cx=Xof(si);
+  ctx.strokeStyle='#0f172a';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx,y1);ctx.lineTo(cx,y0);ctx.stroke();
+  // readout
+  const w=W[si], a=alphas[si];
+  $('aval').textContent = si===0 ? '0' : a.toExponential(2);
+  const tb=$('rows'); tb.innerHTML='';
+  let alive=0;
+  for(let j=0;j<P;j++){
+    const dead=Math.abs(w[j])<1e-9; if(!dead)alive++;
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td><span class="dot" style="background:${COLS[j]}"></span>${NAMES[j]}</td><td>${TRUEW[j]}</td><td>${dead?'0':w[j].toFixed(3)}</td><td class="${dead?'dead':'alive'}">${dead?'dropped ✂':'kept ✓'}</td>`;
+    tb.appendChild(tr);
+  }
+  $('summary').innerHTML=`<b>${alive}/3</b> features kept, <b>${3-alive}/3</b> dropped by Lasso at this alpha.`;
+  let sse=0,sst=0;
+  for(let i=0;i<N;i++){let p=0;for(let j=0;j<P;j++)p+=Xs[i][j]*w[j];sse+=(yc[i]-p)**2;sst+=yc[i]*yc[i];}
+  $('r2').textContent=(1-sse/sst).toFixed(3);
+}
+
+function rebuild(){
+  genData(seed); lassoPath();
+  // default slider: alpha closest to amax*10^-1.3
+  let bi=0,bd=1e9;
+  alphas.forEach((a,i)=>{if(i===0)return;const d=Math.abs(Math.log10(a/amax)+1.3);if(d<bd){bd=d;bi=i;}});
+  $('aslider').value=bi;
+  draw();
+}
+$('aslider').oninput=draw;
+$('newdata').onclick=()=>{seed=(Math.random()*1e9)|0;rebuild();};
+rebuild();
+</script>
+</body>
+</html>

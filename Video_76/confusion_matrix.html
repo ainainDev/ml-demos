@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confusion Matrix Playground — Day 76</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8;
+          --acc:#38bdf8; --tn:#4ade80; --fp:#f43f5e; --fn:#fb923c; --tp:#60a5fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:1000px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .cheat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:13.5px; line-height:1.8; color:#cbd5e1; margin:12px 0; }
+  .cheat b { color:var(--acc); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:12px; }
+  @media (max-width:760px){ .grid{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  canvas { width:100%; height:250px; display:block; background:#0b1220; border-radius:8px; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:14px; }
+  label { font-size:14px; color:var(--dim); display:flex; align-items:center; gap:10px; }
+  label output { color:var(--acc); font-weight:700; font-size:18px; min-width:52px; }
+  input[type=range] { flex:1; accent-color:var(--acc); }
+  .cm { display:grid; grid-template-columns:auto 1fr 1fr; gap:8px; margin-top:10px; align-items:stretch; }
+  .hdr { display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--dim); font-weight:700; padding:6px; }
+  .cell { border-radius:10px; padding:12px 8px; text-align:center; border:2px solid transparent; }
+  .cell .name { font-weight:800; font-size:14px; }
+  .cell .n { font-size:26px; font-weight:800; margin:4px 0; }
+  .cell .d { font-size:11.5px; color:#e2e8f0; opacity:.9; line-height:1.4; }
+  .tn { background:#14532d; } .fp { background:#7f1d1d; } .fn { background:#7c2d12; } .tp { background:#0c4a6e; }
+  .metrics { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+  .m { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:8px 14px; font-size:13px; }
+  .m b { font-size:17px; }
+  .note { font-size:12.5px; color:var(--dim); margin-top:12px; line-height:1.65; }
+  .warn { color:var(--fp); font-weight:700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🧩 Confusion Matrix Playground
+    <span class="sub">Day 76 — slide the decision threshold and watch errors trade off against each other</span>
+  </h1>
+  <div class="cheat">
+    <b>Naming cheat:</b> the 2nd word (Positive / Negative) = what the model <i>predicted</i>;
+    the 1st word (True / False) = whether reality <i>agreed</i>.<br>
+    <b>False Positive = Type 1 error</b> (false alarm) · <b>False Negative = Type 2 error</b> (missed it).
+  </div>
+
+  <div class="grid">
+    <div class="card"><h3>Score distribution — green = actually sick, orange = actually healthy (threshold = white line)</h3><canvas id="histCanvas" width="460" height="250"></canvas></div>
+    <div class="card"><h3>Confusion matrix — rows: actual · columns: predicted</h3>
+      <div class="cm">
+        <div class="hdr"></div><div class="hdr">PREDICTED: Negative (healthy)</div><div class="hdr">PREDICTED: Positive (sick)</div>
+        <div class="hdr">ACTUAL:<br>Negative</div>
+        <div class="cell tn"><div class="name">TN</div><div class="n" id="nTN">0</div><div class="d">healthy, called healthy ✓</div></div>
+        <div class="cell fp"><div class="name">FP · Type 1</div><div class="n" id="nFP">0</div><div class="d">healthy, called sick ✗</div></div>
+        <div class="hdr">ACTUAL:<br>Positive</div>
+        <div class="cell fn"><div class="name">FN · Type 2</div><div class="n" id="nFN">0</div><div class="d">sick, called healthy ✗</div></div>
+        <div class="cell tp"><div class="name">TP</div><div class="n" id="nTP">0</div><div class="d">sick, called sick ✓</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <label>Decision threshold <input type="range" id="thr" min="0" max="100" value="50"><output id="thrOut">0.50</output></label>
+    <div class="metrics">
+      <div class="m">Accuracy = (TP+TN)/total <b id="mAcc" style="color:var(--tn)">–</b></div>
+      <div class="m">Type 1 errors (FP) <b id="mFP" style="color:var(--fp)">–</b></div>
+      <div class="m">Type 2 errors (FN) <b id="mFN" style="color:var(--fn)">–</b></div>
+      <div class="m">Total patients <b id="mTot" style="color:var(--acc)">–</b></div>
+    </div>
+    <p class="note" id="story"></p>
+    <p class="note"><span class="warn">Accuracy trap:</span> slide the threshold to 1.00 — the model calls <i>everyone</i> healthy.
+      Accuracy still looks decent (most patients are healthy!), yet every sick patient is missed (Type 2 errors explode).
+      That's the airport-terrorist trap from the video: a do-nothing model can score ~99.99% and catch nothing.</p>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---- deterministic pseudo-random generator ----
+let seed = 2026076;
+function rand() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+function randn() {
+  let u = 0, v = 0;
+  while (u === 0) u = rand();
+  while (v === 0) v = rand();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+
+// ---- synthetic patient scores: 60 healthy centred 0.35, 40 sick centred 0.65 ----
+const scores = [], labels = [];
+for (let i = 0; i < 60; i++) { scores.push(clamp01(0.35 + randn() * 0.16)); labels.push(0); }
+for (let i = 0; i < 40; i++) { scores.push(clamp01(0.65 + randn() * 0.16)); labels.push(1); }
+const total = scores.length;
+
+const hist = document.getElementById("histCanvas");
+const hctx = hist.getContext("2d");
+let threshold = 0.5;
+const BINS = 20;
+
+function computeCounts(t) {
+  let TP = 0, TN = 0, FP = 0, FN = 0;
+  for (let i = 0; i < total; i++) {
+    const pred = scores[i] >= t ? 1 : 0, act = labels[i];
+    if (act === 1 && pred === 1) TP++;
+    else if (act === 0 && pred === 0) TN++;
+    else if (act === 0 && pred === 1) FP++;
+    else FN++;
+  }
+  return { TP: TP, TN: TN, FP: FP, FN: FN };
+}
+
+function drawHist(t) {
+  const W = hist.width, H = hist.height;
+  hctx.clearRect(0, 0, W, H);
+  const binNeg = new Array(BINS).fill(0), binPos = new Array(BINS).fill(0);
+  for (let i = 0; i < total; i++) {
+    const b = Math.min(BINS - 1, Math.floor(scores[i] * BINS));
+    if (labels[i] === 0) binNeg[b]++; else binPos[b]++;
+  }
+  const peak = Math.max.apply(null, binNeg.concat(binPos));
+  const bw = W / BINS;
+  for (let b = 0; b < BINS; b++) {
+    const hh = (H - 30) * binNeg[b] / peak;
+    hctx.fillStyle = "#4ade80"; hctx.globalAlpha = 0.75;
+    hctx.fillRect(b * bw + 1, H - hh, bw - 2, hh);
+    const hp = (H - 30) * binPos[b] / peak;
+    hctx.fillStyle = "#fb923c"; hctx.globalAlpha = 0.9;
+    hctx.fillRect(b * bw + 1, H - hh - hp, bw - 2, hp);
+  }
+  hctx.globalAlpha = 1;
+  const tx = t * W;
+  hctx.strokeStyle = "#ffffff"; hctx.lineWidth = 3;
+  hctx.beginPath(); hctx.moveTo(tx, 0); hctx.lineTo(tx, H); hctx.stroke();
+  hctx.fillStyle = "#94a3b8"; hctx.font = "11px system-ui";
+  hctx.fillText("0", 4, H - 4); hctx.fillText("1", W - 10, H - 4);
+  hctx.fillText("← predicted healthy", Math.max(4, tx - 118), 14);
+  hctx.fillText("predicted sick →", Math.min(W - 96, tx + 8), 14);
+}
+
+function refresh() {
+  const c = computeCounts(threshold);
+  document.getElementById("nTN").textContent = c.TN;
+  document.getElementById("nFP").textContent = c.FP;
+  document.getElementById("nFN").textContent = c.FN;
+  document.getElementById("nTP").textContent = c.TP;
+  document.getElementById("mAcc").textContent = ((c.TP + c.TN) / total * 100).toFixed(1) + "%";
+  document.getElementById("mFP").textContent = c.FP;
+  document.getElementById("mFN").textContent = c.FN;
+  document.getElementById("mTot").textContent = total;
+  const s = document.getElementById("story");
+  if (threshold <= 0.2) {
+    s.innerHTML = "Threshold very <b>low</b>: almost everyone is called sick. Few Type 2 misses, but Type 1 false alarms explode — panic, wasted tests.";
+  } else if (threshold >= 0.8) {
+    s.innerHTML = "Threshold very <b>high</b>: almost everyone is called healthy. Few false alarms, but sick patients are <b>missed</b> (Type 2) — the dangerous direction for screening.";
+  } else {
+    s.innerHTML = "Mid-range threshold: the two error types trade off. Slide left to cut missed cases (Type 2 ↓, Type 1 ↑), slide right to cut false alarms (Type 1 ↓, Type 2 ↑). Accuracy alone can't tell you which trade-off you picked.";
+  }
+  drawHist(threshold);
+}
+
+document.getElementById("thr").addEventListener("input", function () {
+  threshold = this.value / 100;
+  document.getElementById("thrOut").textContent = threshold.toFixed(2);
+  refresh();
+});
+document.getElementById("thrOut").textContent = "0.50";
+refresh();
+</script>
+</body>
+</html>

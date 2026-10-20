@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ROC Curve &amp; AUC — Interactive Threshold Sweep</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0f172a; color:#e2e8f0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         margin:0; padding:24px; max-width:980px; }
+  h1 { font-size:1.5rem; margin:0 0 6px; color:#fff; }
+  p.sub { color:#94a3b8; margin:0 0 18px; line-height:1.5; }
+  .panel { background:#1e293b; border:1px solid #334155; border-radius:12px; padding:16px 18px; margin:16px 0; }
+  canvas { width:100%; height:auto; display:block; background:#0b1220; border-radius:8px; }
+  label.slider { display:flex; align-items:center; gap:12px; margin:14px 0 4px; font-weight:600; }
+  input[type=range] { flex:1; accent-color:#fbbf24; }
+  .btn { background:#1d4ed8; color:#fff; border:none; border-radius:8px; padding:10px 18px;
+         font-size:1rem; font-weight:600; cursor:pointer; margin-top:10px; }
+  .btn:hover { background:#2563eb; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:12px; }
+  .stat { background:#0b1220; border:1px solid #334155; border-radius:8px; padding:10px 12px; }
+  .stat .k { font-size:.75rem; color:#94a3b8; text-transform:uppercase; letter-spacing:.05em; }
+  .stat .v { font-size:1.35rem; font-weight:700; color:#fff; }
+  .legend { display:flex; flex-wrap:wrap; gap:14px; font-size:.85rem; color:#cbd5e1; margin-top:8px; }
+  .sw { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; }
+  #note { border-left:4px solid #22d3ee; padding:8px 12px; background:#0b1220; border-radius:0 8px 8px 0;
+          margin-top:12px; color:#bae6fd; }
+  .mono { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<h1>ROC Curve &amp; AUC — sweep the threshold</h1>
+<p class="sub">This synthetic classifier assigns every item a <b>score</b> (probability of being positive).
+Each threshold turns scores into one confusion matrix — one <b>(FPR, TPR)</b> point.
+Sweeping the threshold from 1 down to 0 traces the <b>ROC curve</b>, and the area under it is the <b>AUC</b>.</p>
+
+<div class="panel">
+  <h2 style="font-size:1.05rem;margin:0 0 8px;color:#fff">Step 1 — the threshold splits the scores</h2>
+  <canvas id="dist" width="900" height="280"></canvas>
+  <div class="legend">
+    <span><span class="sw" style="background:#3b82f6"></span>Negatives (class 0)</span>
+    <span><span class="sw" style="background:#22d3ee"></span>Positives (class 1)</span>
+    <span><span class="sw" style="background:#22c55e"></span>TP</span>
+    <span><span class="sw" style="background:#ef4444"></span>FP</span>
+    <span><span class="sw" style="background:#f59e0b"></span>FN</span>
+    <span><span class="sw" style="background:#fbbf24"></span>Threshold</span>
+  </div>
+  <label class="slider">Threshold
+    <input id="thr" type="range" min="0" max="1" step="0.005" value="0.5">
+    <span id="thrVal" class="mono">0.500</span>
+  </label>
+</div>
+
+<div class="panel">
+  <h2 style="font-size:1.05rem;margin:0 0 8px;color:#fff">Step 2 — trace the ROC curve</h2>
+  <p class="sub" style="margin-bottom:10px">Press the button to sweep the threshold from 1 → 0 and watch the curve
+  draw itself. The curve <b>bows</b> because lowering a high threshold first adds mostly true positives.
+  The diagonal is a coin-flip classifier.</p>
+  <button class="btn" id="sweepBtn">▶ Animate threshold sweep</button>
+  <canvas id="roc" width="900" height="520" style="margin-top:12px"></canvas>
+  <div class="stats">
+    <div class="stat"><div class="k">TPR = TP/(TP+FN) — benefit</div><div class="v mono" id="stTPR">–</div></div>
+    <div class="stat"><div class="k">FPR = FP/(FP+TN) — cost</div><div class="v mono" id="stFPR">–</div></div>
+    <div class="stat"><div class="k">AUC (area under curve)</div><div class="v mono" id="stAUC">–</div></div>
+    <div class="stat"><div class="k">Best threshold = argmax(TPR−FPR)</div><div class="v mono" id="stBest">–</div></div>
+  </div>
+  <div id="note"></div>
+</div>
+
+<script>
+/* ==================== PURE MATH (no DOM) ==================== */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function randn(rng) {
+  var u = 0, v = 0;
+  while (u === 0) u = rng();
+  while (v === 0) v = rng();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+function clip01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
+
+/* fixed synthetic dataset: 400 positives, 400 negatives */
+function makeData() {
+  var rng = mulberry32(20260708), scores = [], labels = [], i;
+  for (i = 0; i < 400; i++) { scores.push(clip01(0.68 + 0.18 * randn(rng))); labels.push(1); }
+  for (i = 0; i < 400; i++) { scores.push(clip01(0.32 + 0.18 * randn(rng))); labels.push(0); }
+  return { scores: scores, labels: labels };
+}
+var DATA = makeData();
+
+/* (FPR, TPR) at one threshold: predict positive iff score >= t */
+function rocAt(t) {
+  var TP = 0, FP = 0, FN = 0, TN = 0;
+  for (var i = 0; i < DATA.scores.length; i++) {
+    var pos = DATA.labels[i] === 1, pred = DATA.scores[i] >= t;
+    if (pos && pred) TP++; else if (!pos && pred) FP++;
+    else if (pos && !pred) FN++; else TN++;
+  }
+  var tpr = (TP + FN) > 0 ? TP / (TP + FN) : 0;
+  var fpr = (FP + TN) > 0 ? FP / (FP + TN) : 0;
+  return { t: t, TP: TP, FP: FP, FN: FN, TN: TN, tpr: tpr, fpr: fpr };
+}
+
+/* trapezoidal area under points ordered by increasing FPR */
+function trapAUC(points) {
+  var a = 0;
+  for (var i = 1; i < points.length; i++) {
+    var w = points[i].fpr - points[i - 1].fpr;
+    a += w * (points[i].tpr + points[i - 1].tpr) / 2;
+  }
+  return a;
+}
+
+/* full sweep t: 1 -> 0 (plus a point strictly above every score so the
+   curve starts exactly at (0,0)), plus best threshold by argmax(TPR - FPR) */
+function rocSweep() {
+  var pts = [], best = null, i;
+  pts.push(rocAt(1.0001));   /* (0,0): no score can reach this */
+  for (i = 0; i <= 200; i++) {
+    var t = 1 - i / 200;
+    var m = rocAt(t);
+    pts.push(m);
+    if (!best || (m.tpr - m.fpr) > (best.tpr - best.fpr)) best = m;
+  }
+  return { pts: pts, auc: trapAUC(pts), best: best };
+}
+var SWEEP = rocSweep();   /* computed once */
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { rocAt: rocAt, rocSweep: rocSweep, trapAUC: trapAUC, DATA: DATA };
+}
+
+/* ==================== DOM WIRING ==================== */
+function initDemo() {
+  var dist = document.getElementById("dist"), dctx = dist.getContext("2d");
+  var roc = document.getElementById("roc"), rctx = roc.getContext("2d");
+  var NB = 60, binsPos = new Array(NB).fill(0), binsNeg = new Array(NB).fill(0);
+  for (var i = 0; i < DATA.scores.length; i++) {
+    var b = Math.min(NB - 1, Math.floor(DATA.scores[i] * NB));
+    if (DATA.labels[i] === 1) binsPos[b]++; else binsNeg[b]++;
+  }
+  var bmax = 0;
+  for (var j = 0; j < NB; j++) bmax = Math.max(bmax, binsPos[j], binsNeg[j]);
+
+  var W = dist.width, H = dist.height, pad = { l: 56, r: 18, t: 14, b: 40 };
+  function X(x) { return pad.l + x * (W - pad.l - pad.r); }
+  function Y(c) { return H - pad.b - (c / bmax) * (H - pad.t - pad.b); }
+
+  function drawDist(t) {
+    dctx.clearRect(0, 0, W, H);
+    for (var j = 0; j < NB; j++) {
+      var x0 = X(j / NB), x1 = X((j + 1) / NB), mid = (j + 0.5) / NB;
+      var colPos = mid >= t ? "#22c55e" : "#f59e0b";
+      var colNeg = mid >= t ? "#ef4444" : "#3b82f6";
+      dctx.fillStyle = colNeg; dctx.globalAlpha = 0.55;
+      dctx.fillRect(x0, Y(binsNeg[j]), x1 - x0 - 1, H - pad.b - Y(binsNeg[j]));
+      dctx.fillStyle = colPos; dctx.globalAlpha = 0.55;
+      dctx.fillRect(x0, Y(binsPos[j]), x1 - x0 - 1, H - pad.b - Y(binsPos[j]));
+      dctx.globalAlpha = 1;
+    }
+    dctx.strokeStyle = "#fbbf24"; dctx.lineWidth = 2.5; dctx.setLineDash([8, 5]);
+    dctx.beginPath(); dctx.moveTo(X(t), H - pad.b); dctx.lineTo(X(t), pad.t); dctx.stroke();
+    dctx.setLineDash([]);
+    dctx.fillStyle = "#fbbf24"; dctx.font = "bold 13px system-ui";
+    dctx.fillText("threshold " + t.toFixed(2), X(t) + 8, pad.t + 14);
+    dctx.strokeStyle = "#475569"; dctx.lineWidth = 1;
+    dctx.beginPath(); dctx.moveTo(pad.l, H - pad.b); dctx.lineTo(W - pad.r, H - pad.b); dctx.stroke();
+    dctx.fillStyle = "#94a3b8"; dctx.font = "12px system-ui";
+    for (var g = 0; g <= 1.001; g += 0.25) dctx.fillText(g.toFixed(2), X(g) - 12, H - pad.b + 20);
+    dctx.fillText("classifier score →", W / 2 - 46, H - 8);
+  }
+
+  var RW = roc.width, RH = roc.height, rp = { l: 64, r: 20, t: 20, b: 56 };
+  function QX(f) { return rp.l + f * (RW - rp.l - rp.r); }
+  function QY(t) { return RH - rp.b - t * (RH - rp.t - rp.b); }
+
+  function drawRoc(count) {
+    rctx.clearRect(0, 0, RW, RH);
+    rctx.strokeStyle = "#1e293b";
+    for (var g = 0; g <= 1.001; g += 0.2) {
+      rctx.beginPath(); rctx.moveTo(QX(g), QY(0)); rctx.lineTo(QX(g), QY(1)); rctx.stroke();
+      rctx.beginPath(); rctx.moveTo(QX(0), QY(g)); rctx.lineTo(QX(1), QY(g)); rctx.stroke();
+    }
+    // random-guessing diagonal
+    rctx.strokeStyle = "#94a3b8"; rctx.lineWidth = 2; rctx.setLineDash([7, 6]);
+    rctx.beginPath(); rctx.moveTo(QX(0), QY(0)); rctx.lineTo(QX(1), QY(1)); rctx.stroke();
+    rctx.setLineDash([]);
+    rctx.fillStyle = "#94a3b8"; rctx.font = "12px system-ui";
+    rctx.fillText("random guessing (AUC = 0.5)", QX(0.55), QY(0.5) - 10);
+    // revealed points
+    var pts = SWEEP.pts.slice(0, count);
+    if (pts.length > 1) {
+      rctx.beginPath(); rctx.moveTo(QX(pts[0].fpr), QY(pts[0].tpr));
+      rctx.lineTo(QX(pts[0].fpr), QY(0));
+      for (var i = 1; i < pts.length; i++) rctx.lineTo(QX(pts[i].fpr), QY(pts[i].tpr));
+      rctx.lineTo(QX(pts[pts.length - 1].fpr), QY(0));
+      rctx.closePath();
+      rctx.fillStyle = "rgba(29,78,216,0.35)"; rctx.fill();
+      rctx.beginPath();
+      pts.forEach(function (m, k) { k ? rctx.lineTo(QX(m.fpr), QY(m.tpr)) : rctx.moveTo(QX(m.fpr), QY(m.tpr)); });
+      rctx.strokeStyle = "#22d3ee"; rctx.lineWidth = 3; rctx.stroke();
+    }
+    // ideal point marker
+    rctx.fillStyle = "#22c55e";
+    rctx.beginPath(); rctx.arc(QX(0), QY(1), 8, 0, 7); rctx.fill();
+    rctx.strokeStyle = "#fff"; rctx.lineWidth = 2; rctx.stroke();
+    rctx.fillStyle = "#86efac"; rctx.font = "bold 12px system-ui";
+    rctx.fillText("ideal (0,1)", QX(0) + 14, QY(1) + 4);
+    // best-threshold point (only after full sweep)
+    if (count >= SWEEP.pts.length) {
+      var b = SWEEP.best;
+      rctx.fillStyle = "#fbbf24";
+      rctx.beginPath(); rctx.arc(QX(b.fpr), QY(b.tpr), 9, 0, 7); rctx.fill();
+      rctx.strokeStyle = "#0f172a"; rctx.lineWidth = 2; rctx.stroke();
+      rctx.fillStyle = "#fbbf24"; rctx.font = "bold 13px system-ui";
+      rctx.fillText("★ best threshold " + b.t.toFixed(2), QX(b.fpr) + 14, QY(b.tpr) - 12);
+    }
+    // current point
+    var cur = SWEEP.pts[Math.min(count - 1, SWEEP.pts.length - 1)];
+    if (cur && count > 0) {
+      rctx.fillStyle = "#ef4444";
+      rctx.beginPath(); rctx.arc(QX(cur.fpr), QY(cur.tpr), 7, 0, 7); rctx.fill();
+      rctx.strokeStyle = "#fff"; rctx.lineWidth = 2; rctx.stroke();
+    }
+    // axes
+    rctx.strokeStyle = "#475569"; rctx.lineWidth = 1;
+    rctx.beginPath(); rctx.moveTo(rp.l, QY(0)); rctx.lineTo(RW - rp.r, QY(0));
+    rctx.moveTo(rp.l, QY(0)); rctx.lineTo(rp.l, QY(1)); rctx.stroke();
+    rctx.fillStyle = "#94a3b8"; rctx.font = "12px system-ui";
+    for (var k = 0; k <= 1.001; k += 0.2) {
+      rctx.fillText(k.toFixed(1), QX(k) - 8, RH - rp.b + 20);
+      rctx.fillText(k.toFixed(1), rp.l - 34, QY(k) + 4);
+    }
+    rctx.fillStyle = "#e2e8f0"; rctx.font = "13px system-ui";
+    rctx.fillText("false positive rate (cost) →", RW / 2 - 100, RH - 10);
+    rctx.save(); rctx.translate(18, RH / 2 + 90); rctx.rotate(-Math.PI / 2);
+    rctx.fillText("true positive rate (benefit) →", 0, 0); rctx.restore();
+  }
+
+  var animating = false, revealed = 0;
+
+  function updateStats(count) {
+    var pts = SWEEP.pts.slice(0, count);
+    var live = pts[pts.length - 1];
+    var auc = pts.length > 1 ? trapAUC(pts) : 0;
+    document.getElementById("stTPR").textContent = live.tpr.toFixed(3);
+    document.getElementById("stFPR").textContent = live.fpr.toFixed(3);
+    document.getElementById("stAUC").textContent = auc.toFixed(3) + (count >= SWEEP.pts.length ? " ✓" : " …");
+    document.getElementById("stBest").textContent =
+      count >= SWEEP.pts.length ? SWEEP.best.t.toFixed(3) : "—";
+    var note = document.getElementById("note");
+    if (count >= SWEEP.pts.length) {
+      note.textContent = "Sweep complete: AUC = " + SWEEP.auc.toFixed(3) +
+        " (well above 0.5 random guessing, close to the 1.0 ideal). The best threshold " +
+        SWEEP.best.t.toFixed(2) + " maximizes TPR − FPR = " +
+        (SWEEP.best.tpr - SWEEP.best.fpr).toFixed(3) + ".";
+    } else if (count > 1) {
+      note.textContent = "Sweeping… threshold " + live.t.toFixed(2) +
+        ": each step lowers the threshold, adding one (FPR, TPR) point. Both rise — but not linearly, hence the bow.";
+    } else {
+      note.textContent = "Drag the threshold above, or press the sweep button to trace the whole curve.";
+    }
+  }
+
+  function revealAll() {
+    revealed = SWEEP.pts.length;
+    drawRoc(revealed);
+    updateStats(revealed);
+  }
+
+  document.getElementById("sweepBtn").addEventListener("click", function () {
+    if (animating) return;
+    animating = true; revealed = 0;
+    var timer = setInterval(function () {
+      revealed += 3;
+      if (revealed >= SWEEP.pts.length) {
+        clearInterval(timer);
+        revealed = SWEEP.pts.length;
+        animating = false;
+      }
+      drawRoc(revealed);
+      updateStats(revealed);
+    }, 40);
+  });
+
+  function updateDist() {
+    var t = parseFloat(document.getElementById("thr").value);
+    document.getElementById("thrVal").textContent = t.toFixed(3);
+    drawDist(t);
+    if (!animating) {
+      var m = rocAt(t), idx = 1 + Math.round((1 - t) * 200);
+      revealed = Math.max(1, Math.min(SWEEP.pts.length, idx));
+      drawRoc(revealed);
+      updateStats(revealed);
+    }
+  }
+  document.getElementById("thr").addEventListener("input", updateDist);
+  updateDist();
+}
+
+if (typeof window !== "undefined" && typeof document !== "undefined") initDemo();
+</script>
+</body>
+</html>

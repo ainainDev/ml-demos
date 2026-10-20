@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ridge Closed-Form Playground — (XᵀX + λI)⁻¹Xᵀy live</title>
+<style>
+  body{background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+       margin:0;padding:24px;max-width:980px}
+  h1{font-size:22px;margin:0 0 6px}
+  p.desc{color:#94a3b8;font-size:14px;margin:0 0 18px;line-height:1.55;max-width:760px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  canvas{background:#111c34;border:1px solid #334155;border-radius:10px;width:100%;height:360px;display:block}
+  .panel{background:#16213a;border:1px solid #334155;border-radius:10px;padding:14px 18px}
+  .slider-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:12px}
+  input[type=range]{flex:1;min-width:200px;accent-color:#22d3ee}
+  .lam-val{font-size:18px;font-weight:700;color:#22d3ee;min-width:110px}
+  .mat{font-family:ui-monospace,Menlo,monospace;font-size:13px;background:#0b1326;border:1px solid #334155;
+       border-radius:8px;padding:10px 14px;margin:8px 0;white-space:pre;color:#e2e8f0;overflow-x:auto}
+  .mlabel{color:#fbbf24;font-size:13px;font-weight:700;margin-top:12px}
+  .note{color:#94a3b8;font-size:13px;line-height:1.5}
+  .w{color:#4ade80;font-weight:700}
+  label.chk{display:flex;gap:8px;align-items:center;font-size:14px;margin-top:10px;cursor:pointer}
+</style>
+</head>
+<body>
+<h1>🎮 Ridge closed-form playground</h1>
+<p class="desc">2-D data (true line y = 3x + 5). Every step of
+<b>w = (XᵀX + λI)⁻¹Xᵀy</b> is computed live in plain JavaScript — no libraries.
+Drag λ and watch the 2×2 inverse shrink the weights, while the pink fitted line flattens.</p>
+
+<div class="grid">
+  <div>
+    <canvas id="plot" width="700" height="360"></canvas>
+    <div class="slider-row">
+      <label for="lam"><b>λ (alpha)</b></label>
+      <input type="range" id="lam" min="-3" max="3" step="0.05" value="0">
+      <span class="lam-val" id="lamVal">λ = 1.00</span>
+    </div>
+    <label class="chk"><input type="checkbox" id="penInt"> Penalize the intercept too (sklearn does NOT do this)</label>
+  </div>
+  <div class="panel">
+    <div class="mlabel">XᵀX <span class="note">— feature spread</span></div>
+    <div class="mat" id="m1"></div>
+    <div class="mlabel">λI <span class="note">— the ridge penalty</span></div>
+    <div class="mat" id="m2"></div>
+    <div class="mlabel">(XᵀX + λI)⁻¹ <span class="note">— inverted in plain JS</span></div>
+    <div class="mat" id="m3"></div>
+    <div class="mlabel">w = (XᵀX + λI)⁻¹Xᵀy <span class="note">— final weights</span></div>
+    <div class="mat w" id="m4"></div>
+    <p class="note" id="shrink"></p>
+  </div>
+</div>
+
+<script>
+"use strict";
+let seed = 7;
+function rnd(){ seed|=0; seed = seed + 0x6D2B79F5 | 0;
+  let t = Math.imul(seed ^ seed>>>15, 1|seed);
+  t = t + Math.imul(t ^ t>>>7, 61|t) ^ t;
+  return ((t ^ t>>>14)>>>0)/4294967296; }
+function gauss(){ let u=0,v=0; while(!u)u=rnd(); while(!v)v=rnd();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+
+const pts=[];
+for(let i=0;i<30;i++){ const x=rnd()*10; pts.push({x, y:3*x+5+gauss()*5}); }
+
+// 2x2 helpers
+const add=(A,B)=>[[A[0][0]+B[0][0],A[0][1]+B[0][1]],[A[1][0]+B[1][0],A[1][1]+B[1][1]]];
+function inv2(A){ const d=A[0][0]*A[1][1]-A[0][1]*A[1][0];
+  return [[A[1][1]/d,-A[0][1]/d],[-A[1][0]/d,A[0][0]/d]]; }
+const matVec=(A,v)=>[A[0][0]*v[0]+A[0][1]*v[1], A[1][0]*v[0]+A[1][1]*v[1]];
+const fmt=n=>n.toFixed(3).padStart(9);
+
+function solve(lam, penInt){
+  let XtX=[[0,0],[0,0]], Xty=[0,0];
+  for(const p of pts){ XtX[0][0]+=1; XtX[0][1]+=p.x; XtX[1][0]+=p.x; XtX[1][1]+=p.x*p.x;
+                        Xty[0]+=p.y; Xty[1]+=p.x*p.y; }
+  const I=[[penInt?lam:0,0],[0,lam]];
+  const reg=add(XtX,I), inv=inv2(reg), w=matVec(inv,Xty);
+  return {XtX,I,inv,w};
+}
+
+const cvs=document.getElementById("plot"), ctx=cvs.getContext("2d");
+const W=cvs.width,H=cvs.height,pad=40;
+const XMIN=-0.5,XMAX=10.5,YMIN=-10,YMAX=45;
+const X=x=>pad+(x-XMIN)/(XMAX-XMIN)*(W-2*pad);
+const Y=y=>H-pad-(y-YMIN)/(YMAX-YMIN)*(H-2*pad);
+
+function draw(b,m){ // y = m x + b
+  ctx.clearRect(0,0,W,H);
+  ctx.strokeStyle="#334155"; ctx.lineWidth=1; ctx.strokeRect(pad,pad,W-2*pad,H-2*pad);
+  for(const p of pts){ ctx.fillStyle="#38bdf8"; ctx.beginPath(); ctx.arc(X(p.x),Y(p.y),4,0,7); ctx.fill(); }
+  ctx.setLineDash([7,5]); ctx.strokeStyle="#64748b"; ctx.lineWidth=2; ctx.beginPath();
+  ctx.moveTo(X(XMIN),Y(3*XMIN+5)); ctx.lineTo(X(XMAX),Y(3*XMAX+5)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle="#f472b6"; ctx.lineWidth=3; ctx.beginPath();
+  ctx.moveTo(X(XMIN),Y(b+m*XMIN)); ctx.lineTo(X(XMAX),Y(b+m*XMAX)); ctx.stroke();
+  ctx.fillStyle="#94a3b8"; ctx.font="12px system-ui";
+  ctx.fillText("grey dashed = true line (y = 3x + 5)", pad+6, H-12);
+  ctx.fillStyle="#f472b6"; ctx.fillText("pink = ridge fit", pad+236, H-12);
+}
+
+function update(){
+  const lam=Math.pow(10,parseFloat(document.getElementById("lam").value));
+  const penInt=document.getElementById("penInt").checked;
+  document.getElementById("lamVal").textContent="λ = "+lam.toFixed(lam<1?3:2);
+  const {XtX,I,inv,w}=solve(lam,penInt);
+  draw(w[0],w[1]);
+  document.getElementById("m1").textContent=
+    "⎡"+fmt(XtX[0][0])+"  "+fmt(XtX[0][1])+"⎤\n⎣"+fmt(XtX[1][0])+"  "+fmt(XtX[1][1])+"⎦";
+  document.getElementById("m2").textContent=
+    "⎡"+fmt(I[0][0])+"  "+fmt(I[0][1])+"⎤\n⎣"+fmt(I[1][0])+"  "+fmt(I[1][1])+"⎦";
+  document.getElementById("m3").textContent=
+    "⎡"+fmt(inv[0][0])+"  "+fmt(inv[0][1])+"⎤\n⎣"+fmt(inv[1][0])+"  "+fmt(inv[1][1])+"⎦";
+  document.getElementById("m4").textContent=
+    "w = [ b = "+w[0].toFixed(3)+",   m = "+w[1].toFixed(3)+" ]";
+  const w0=solve(0,false).w;
+  document.getElementById("shrink").innerHTML=
+    "OLS weights (λ=0): b = "+w0[0].toFixed(2)+", m = "+w0[1].toFixed(2)+
+    "<br>Ridge shrunk the slope by "+(100*(1-w[1]/w0[1])).toFixed(1)+"% toward zero."+
+    (penInt?" <b>Intercept penalized</b> — not what sklearn does.":" Intercept unpenalized, exactly like sklearn.");
+}
+document.getElementById("lam").addEventListener("input",update);
+document.getElementById("penInt").addEventListener("change",update);
+update();
+</script>
+</body>
+</html>
