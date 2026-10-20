@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AdaBoost from Scratch — live weight evolution</title>
+<style>
+body{margin:0;background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:18px}
+h1{font-size:1.35rem;margin:0 0 4px} h2{font-size:1.02rem;color:#93c5fd;margin:18px 0 8px}
+p{font-size:.86rem;line-height:1.55;color:#cbd5e1}
+.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:14px;margin:12px 0}
+.row{display:flex;flex-wrap:wrap;gap:14px}
+.col{flex:1 1 320px}
+button{background:#2563eb;border:0;color:#fff;border-radius:8px;padding:8px 14px;font-size:.84rem;cursor:pointer;margin:2px}
+button.off{background:#334155} button:hover{filter:brightness(1.15)}
+table{border-collapse:collapse;width:100%;font-size:.78rem}
+th,td{border:1px solid #334155;padding:5px 7px;text-align:center}
+th{background:#0f172a;color:#93c5fd} td.num{font-variant-numeric:tabular-nums}
+tr.miss td{background:rgba(239,68,68,.14)}
+.tag{font-size:.66rem;background:#7c2d12;color:#fdba74;border-radius:4px;padding:1px 5px;margin-left:3px}
+canvas{background:#0b1220;border:1px solid #334155;border-radius:10px;width:100%;height:auto}
+.alpha{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+.alpha .chip{background:#0b1220;border:1px solid #334155;border-radius:8px;padding:8px 12px;font-size:.8rem}
+.alpha .chip b{color:#fbbf24}
+.small{font-size:.74rem;color:#94a3b8}
+code{background:#0b1220;padding:1px 6px;border-radius:5px;font-size:.78rem;color:#fbbf24}
+.legend{display:flex;gap:14px;font-size:.76rem;color:#94a3b8;margin-top:6px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px}
+</style></head>
+<body><div class="wrap">
+<h1>AdaBoost from Scratch — live weight evolution</h1>
+<p>This demo runs a real 3-round AdaBoost <b>in your browser</b>: 10 training points, decision-stump search each round (like <code>DecisionTreeClassifier(max_depth=1)</code>), equal start weights of <code>1/10</code>, error &rarr; &alpha; &rarr; weight update &rarr; normalize &rarr; weighted resample. Scrub the rounds and watch the hard points grow while the easy ones shrink. <span class="small">(Deterministic — same numbers every visit. An epsilon guard keeps &alpha; finite if a round ever has zero error.)</span></p>
+
+<div class="card"><h2>1 · Training rounds</h2>
+<div id="roundBtns"></div>
+<div class="alpha" id="alphaChips"></div>
+<div class="row" style="margin-top:10px">
+<div class="col"><canvas id="cv" width="420" height="420"></canvas>
+<div class="legend"><span><span class="dot" style="background:#22c55e"></span>label +1</span><span><span class="dot" style="background:#ef4444"></span>label −1</span><span>bubble size = sample weight at this stage</span></div>
+<p class="small">The line is the stump trained in the selected round (only rounds ≥ 1 have a stump). Click anywhere to set a custom test point and see the final vote below.</p></div>
+<div class="col"><h2>2 · Weights table</h2>
+<table id="wtab"><thead><tr><th>#</th><th>x</th><th>y</th><th>label</th><th>w₀</th><th>w₁</th><th>w₂</th><th>w₃</th></tr></thead><tbody></tbody></table>
+<p class="small">Rows tinted red were misclassified in that round — their weights jump up by &times;e<sup>&alpha;</sup>; correct ones shrink by &times;e<sup>−&alpha;</sup>, then everything is normalized to sum to 1.</p></div>
+</div></div>
+
+<div class="card"><h2>3 · Final vote: sign(Σ α·h)</h2>
+<div><button id="tA">Test point A</button><button id="tB">Test point B</button> <span class="small">or click the canvas for a custom point</span></div>
+<table style="margin-top:10px"><thead><tr><th>Stump</th><th>h(x)</th><th>α (say)</th><th>α·h(x)</th></tr></thead><tbody id="voteBody"></tbody></table>
+<p id="verdict" style="font-size:1rem"></p></div>
+</div>
+<script>
+"use strict";
+// ---------- data ----------
+const PTS=[
+ {x:0.15,y:0.80,l:-1},{x:0.25,y:0.30,l:-1},{x:0.35,y:0.70,l: 1},
+ {x:0.42,y:0.20,l:-1},{x:0.48,y:0.60,l: 1},{x:0.55,y:0.25,l:-1},
+ {x:0.62,y:0.75,l: 1},{x:0.70,y:0.40,l: 1},{x:0.82,y:0.85,l: 1},
+ {x:0.90,y:0.35,l: 1}];
+const N=PTS.length, ROUNDS=3, EPS=1e-10;
+const TESTS={A:{x:0.78,y:0.55,name:"A"},B:{x:0.30,y:0.50,name:"B"}};
+let testPt=TESTS.A;
+
+// ---------- deterministic RNG ----------
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+const rng=mulberry32(117118);
+
+// ---------- stump search on a bootstrap sample ----------
+function fitStump(trainIdx){
+  let best=null,bestErr=1e9;
+  for(const f of ["x","y"]){
+    const vals=[...new Set(trainIdx.map(i=>PTS[i][f]))].sort((a,b)=>a-b);
+    for(let k=0;k<vals.length-1;k++){
+      const thr=(vals[k]+vals[k+1])/2;
+      for(const pol of [1,-1]){
+        let err=0;
+        for(const i of trainIdx){const p=(pol*(PTS[i][f]-thr)>0)?1:-1;if(p!==PTS[i].l)err++;}
+        if(err<bestErr){bestErr=err;best={feat:f,thr:thr,pol:pol};}
+      }
+    }
+  }
+  return best;
+}
+function predict(stump,i){return (stump.pol*(PTS[i][stump.feat]-stump.thr)>0)?1:-1;}
+function predictPt(stump,x,y){return (stump.pol*((stump.feat==="x"?x:y)-stump.thr)>0)?1:-1;}
+
+// ---------- AdaBoost training ----------
+let w=Array(N).fill(1/N);
+const stages=[w.slice()];          // stage 0 = init weights
+const rounds=[];                   // per round: stump, error, alpha, misses
+for(let m=0;m<ROUNDS;m++){
+  // weighted resample with replacement
+  const cum=[];let s=0;for(const v of w){s+=v;cum.push(s);}
+  const trainIdx=[];
+  for(let d=0;d<N;d++){const r=rng()*s;let i=0;while(cum[i]<r)i++;trainIdx.push(i);}
+  // fit stump on resampled set
+  const stump=fitStump(trainIdx);
+  // total error on ORIGINAL points with CURRENT weights
+  let err=0;const miss=[];
+  for(let i=0;i<N;i++){if(predict(stump,i)!==PTS[i].l){err+=w[i];miss.push(i);}}
+  err=Math.max(err,EPS);           // epsilon guard: zero error -> alpha stays finite
+  const alpha=0.5*Math.log((1-err)/err);
+  // weight update then normalize
+  let tot=0;
+  w=w.map((v,i)=>{const nv=v*((miss.includes(i))?Math.exp(alpha):Math.exp(-alpha));tot+=nv;return nv;});
+  w=w.map(v=>v/tot);
+  stages.push(w.slice());
+  rounds.push({stump:stump,err:err,alpha:alpha,miss:miss});
+}
+
+// ---------- UI ----------
+let stage=1;
+const cv=document.getElementById("cv"),ctx=cv.getContext("2d");
+function draw(){
+  ctx.clearRect(0,0,420,420);
+  const ww=stages[stage];
+  // grid
+  ctx.strokeStyle="#1e293b";ctx.lineWidth=1;
+  for(let g=0;g<=10;g++){ctx.beginPath();ctx.moveTo(g*42,0);ctx.lineTo(g*42,420);ctx.stroke();ctx.beginPath();ctx.moveTo(0,g*42);ctx.lineTo(420,g*42);ctx.stroke();}
+  // stump boundary
+  if(stage>=1){
+    const st=rounds[stage-1].stump;
+    ctx.strokeStyle="#fbbf24";ctx.lineWidth=2;ctx.setLineDash([8,5]);
+    const t=st.thr*400+10;
+    ctx.beginPath();
+    if(st.feat==="x"){ctx.moveTo(t,0);ctx.lineTo(t,420);}else{ctx.moveTo(0,420-t);ctx.lineTo(420,420-t);}
+    ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle="#fbbf24";ctx.font="12px sans-serif";
+    ctx.fillText("stump "+stage+" (α="+rounds[stage-1].alpha.toFixed(2)+")",14,18);
+  }
+  // points, bubble radius ~ weight
+  PTS.forEach((p,i)=>{
+    const X=p.x*400+10,Y=420-p.y*400-10,r=4+Math.sqrt(ww[i])*46;
+    ctx.beginPath();ctx.arc(X,Y,r,0,7);
+    ctx.fillStyle=p.l===1?"rgba(34,197,94,.75)":"rgba(239,68,68,.75)";ctx.fill();
+    ctx.strokeStyle="#e2e8f0";ctx.lineWidth=1;ctx.stroke();
+    ctx.fillStyle="#fff";ctx.font="10px sans-serif";ctx.fillText(i,X-3,Y+3);
+  });
+  // test point
+  const TX=testPt.x*400+10,TY=420-testPt.y*400-10;
+  ctx.beginPath();ctx.arc(TX,TY,9,0,7);ctx.fillStyle="#38bdf8";ctx.fill();
+  ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.stroke();
+  ctx.fillStyle="#0f172a";ctx.font="bold 11px sans-serif";ctx.fillText("?",TX-3.5,TY+4);
+}
+function renderTable(){
+  const tb=document.querySelector("#wtab tbody");tb.innerHTML="";
+  PTS.forEach((p,i)=>{
+    const tr=document.createElement("tr");
+    let tags="";
+    rounds.forEach((r,m)=>{if(r.miss.includes(i))tags+='<span class="tag">R'+(m+1)+'</span>';});
+    if(rounds[stage-1]&&rounds[stage-1].miss.includes(i))tr.className="miss";
+    let cells='<td>'+i+'</td><td class="num">'+p.x.toFixed(2)+'</td><td class="num">'+p.y.toFixed(2)+'</td><td>'+(p.l===1?"+1":"−1")+tags+'</td>';
+    for(let s=0;s<=ROUNDS;s++)cells+='<td class="num">'+stages[s][i].toFixed(3)+'</td>';
+    tr.innerHTML=cells;tb.appendChild(tr);
+  });
+}
+function renderRounds(){
+  const div=document.getElementById("roundBtns");div.innerHTML="";
+  for(let s=0;s<=ROUNDS;s++){
+    const b=document.createElement("button");
+    b.textContent=s===0?"Init weights":"Round "+s;
+    if(s===stage)b.className="off";else b.className="";
+    b.onclick=()=>{stage=s;renderAll();};
+    div.appendChild(b);
+  }
+  const chips=document.getElementById("alphaChips");chips.innerHTML="";
+  rounds.forEach((r,m)=>{
+    const d=document.createElement("div");d.className="chip";
+    d.innerHTML="Round "+(m+1)+": error="+r.err.toFixed(3)+" → <b>α="+(r.alpha.toFixed(3))+"</b> · "+r.miss.length+" mistake"+(r.miss.length===1?"":"s");
+    chips.appendChild(d);
+  });
+}
+function renderVote(){
+  const tb=document.getElementById("voteBody");tb.innerHTML="";
+  let total=0;
+  rounds.forEach((r,m)=>{
+    const h=predictPt(r.stump,testPt.x,testPt.y),c=r.alpha*h;total+=c;
+    tb.innerHTML+='<tr><td>stump '+(m+1)+'</td><td>'+(h===1?"+1":"−1")+'</td><td class="num">'+r.alpha.toFixed(3)+'</td><td class="num">'+c.toFixed(3)+'</td></tr>';
+  });
+  const cls=total>=0?"+1":"−1";
+  document.getElementById("verdict").innerHTML='Weighted sum = <b>'+total.toFixed(3)+'</b> → sign → predicted class <b style="color:'+(cls==="+1"?"#22c55e":"#ef4444")+'">'+cls+'</b>';
+}
+function renderAll(){renderRounds();draw();renderTable();renderVote();}
+document.getElementById("tA").onclick=()=>{testPt=TESTS.A;draw();renderVote();};
+document.getElementById("tB").onclick=()=>{testPt=TESTS.B;draw();renderVote();};
+cv.onclick=e=>{
+  const r=cv.getBoundingClientRect();
+  const px=(e.clientX-r.left)/r.width,py=(e.clientY-r.top)/r.height;
+  testPt={x:Math.min(.999,Math.max(.001,(px*420-10)/400)),y:Math.min(.999,Math.max(.001,(420-py*420-10)/400)),name:"custom"};
+  draw();renderVote();
+};
+renderAll();
+</script>
+</body></html>

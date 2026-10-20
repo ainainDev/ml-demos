@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AdaBoost hyperparameters — GridSearch explorer</title>
+<style>
+body{margin:0;background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:18px}
+h1{font-size:1.35rem;margin:0 0 4px}
+p{font-size:.86rem;line-height:1.55;color:#cbd5e1}
+.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:14px;margin:12px 0}
+button{background:#2563eb;border:0;color:#fff;border-radius:8px;padding:8px 14px;font-size:.84rem;cursor:pointer;margin:2px}
+button.off{background:#334155} button:hover{filter:brightness(1.15)}
+.warn{background:#451a03;border:1px solid #9a3412;color:#fdba74;border-radius:10px;padding:10px 14px;font-size:.8rem;margin:12px 0}
+table{border-collapse:collapse;margin:12px auto}
+th,td{border:1px solid #334155;padding:0;text-align:center}
+th{background:#0b1220;color:#93c5fd;padding:8px 10px;font-size:.8rem}
+td.cell{width:96px;height:64px;cursor:pointer;font-weight:bold;font-size:1rem;color:#0f172a}
+td.cell:hover{outline:3px solid #fbbf24}
+.detail{background:#0b1220;border:1px solid #334155;border-radius:10px;padding:12px;margin-top:10px;font-size:.86rem;min-height:76px}
+.detail b{color:#fbbf24}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:8px}
+.kv div{background:#0b1220;border:1px solid #334155;border-radius:8px;padding:8px 10px;font-size:.78rem}
+.legend{display:flex;gap:12px;justify-content:center;font-size:.76rem;color:#94a3b8;margin-top:8px;flex-wrap:wrap}
+.sw{display:inline-block;width:14px;height:14px;border-radius:4px;margin-right:4px;vertical-align:-2px}
+.bar{height:10px;background:#0b1220;border-radius:6px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,#38bdf8,#22c55e)}
+.small{font-size:.74rem;color:#94a3b8}
+code{background:#0b1220;padding:1px 6px;border-radius:5px;font-size:.78rem;color:#fbbf24}
+</style></head>
+<body><div class="wrap">
+<h1>AdaBoost Hyperparameters — GridSearch explorer</h1>
+<p>Sweep the same grid the video searched (<code>n_estimators × learning_rate × algorithm</code>) and feel the central trade-off: raise <code>n_estimators</code> and lower <code>learning_rate</code> together. Hover or tap a cell to inspect it; presets jump to the underfit, sweet-spot and overfit corners.</p>
+<div class="warn">⚠️ <b>Illustrative accuracy surface</b> — these numbers are a hand-built sketch showing the <i>pattern</i> (underfit → sweet spot → overfit), not the video's real data. They exist so you can explore the trade-off, not to be quoted.</div>
+
+<div class="card">
+<div style="text-align:center">
+<button id="tSamme">algorithm = SAMME</button><button id="tSammeR" class="off">algorithm = SAMME.R</button>
+</div>
+<table id="hm"><thead><tr><th>n_estimators ↓ / learning_rate →</th></tr></thead><tbody></tbody></table>
+<div class="legend">
+<span><span class="sw" style="background:#ef4444"></span>low accuracy</span>
+<span><span class="sw" style="background:#fbbf24"></span>mid</span>
+<span><span class="sw" style="background:#22c55e"></span>high</span>
+</div>
+<div class="detail" id="detail">Pick a cell to see its regime, accuracy and why it behaves that way.</div>
+</div>
+
+<div class="card">
+<button id="pUnder">Show underfit</button>
+<button id="pSweet">Show sweet spot</button>
+<button id="pOver">Show overfit</button>
+<button id="sweep">▶ Sweep the grid</button>
+<div class="kv">
+<div><b>Underfit</b><br>n_estimators = 1 — one stump can't capture the pattern, whatever the learning rate.<div class="bar"><i style="width:62%"></i></div></div>
+<div><b>Sweet spot</b><br>SAMME.R · n_estimators = 500 · learning_rate = 0.1 — many shrunk votes, smooth boundary.<div class="bar"><i style="width:83%"></i></div></div>
+<div><b>Overfit</b><br>n_estimators = 1000 · learning_rate = 1.0 — huge unshrunk ensemble, fragmented boundary.<div class="bar"><i style="width:74%"></i></div></div>
+</div>
+<p class="small">Shrinkage rule of thumb: when you raise <code>n_estimators</code>, lower <code>learning_rate</code> together (effective say per stump = <code>learning_rate × α</code>). SAMME.R uses class probabilities instead of hard votes, so it typically converges faster with lower test error than SAMME.</p>
+</div>
+</div>
+<script>
+"use strict";
+const NS=[1,10,50,100,500,1000], LRS=[0.01,0.1,0.5,1.0];
+let algo="SAMME"; // "SAMME" | "SAMMER"
+const BASE={1:0.62,10:0.74,50:0.78,100:0.80,500:0.81,1000:0.80};
+const LRF={0.01:-0.03,0.1:0.02,0.5:-0.01,1.0:0};
+// Illustrative, hand-built accuracy surface (bounded 0..1, peaked near 500 x 0.1).
+function acc(n,lr){
+  let a=BASE[n]+LRF[lr];
+  if(n>=1000&&lr>=0.5)a-=0.05;   // heavy overfit dip
+  if(n>=500&&lr>=1.0)a-=0.03;
+  if(algo==="SAMMER")a+=0.015;    // SAMME.R converges faster
+  return Math.min(1,Math.max(0,a));
+}
+function regime(n,lr,a){
+  if(n===1)return ["UNDERFIT","one stump can't capture the pattern — accuracy stays low no matter the learning rate."];
+  if(n===500&&lr===0.1&&algo==="SAMMER")return ["SWEET SPOT","many shrunk votes (lr × α) → smooth boundary, best generalization."];
+  if(n>=1000&&lr>=0.5)return ["OVERFIT","huge unshrunk ensemble memorizes noise — accuracy drops and training crawls."];
+  if(a>=0.80)return ["HEALTHY","solid middle ground — this region is where the video's GridSearchCV landed (lr 0.1, n 500)."];
+  return ["MIXED","learning here is too fast (high lr) or too short (low n) to settle well."];
+}
+function color(a){ // red -> yellow -> green
+  const h=Math.round(a*120);
+  return "hsl("+h+",75%,55%)";
+}
+function render(){
+  const hm=document.getElementById("hm");
+  const thead=hm.querySelector("thead tr");
+  thead.innerHTML="<th>n_estimators ↓ / learning_rate →</th>";
+  LRS.forEach(lr=>{const th=document.createElement("th");th.textContent="lr = "+lr;thead.appendChild(th);});
+  const tb=hm.querySelector("tbody");tb.innerHTML="";
+  NS.forEach(n=>{
+    const tr=document.createElement("tr");
+    const th=document.createElement("th");th.textContent=n;tr.appendChild(th);
+    LRS.forEach(lr=>{
+      const a=acc(n,lr),td=document.createElement("td");
+      td.className="cell";td.style.background=color(a);td.textContent=a.toFixed(2);
+      td.dataset.n=n;td.dataset.lr=lr;
+      td.onmouseenter=td.onclick=()=>show(n,lr,a);
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+  document.getElementById("tSamme").className=algo==="SAMME"?"":"off";
+  document.getElementById("tSammeR").className=algo==="SAMMER"?"":"off";
+}
+function show(n,lr,a){
+  const r=regime(n,lr,a);
+  document.getElementById("detail").innerHTML=
+    "<b>"+r[0]+"</b> — n_estimators="+n+", learning_rate="+lr+", algorithm="+(algo==="SAMMER"?"SAMME.R":"SAMME")+
+    " → accuracy <b>"+a.toFixed(2)+"</b><br><span style='color:#94a3b8'>"+r[1]+"</span>";
+}
+function flash(n,lr){
+  const cells=document.querySelectorAll("td.cell");
+  cells.forEach(c=>{
+    if(+c.dataset.n===n&&+c.dataset.lr===+lr){
+      show(n,lr,acc(n,lr));
+      c.style.outline="3px solid #fbbf24";
+      setTimeout(()=>{c.style.outline="";},1600);
+      c.scrollIntoView({block:"nearest",behavior:"smooth"});
+    }
+  });
+}
+document.getElementById("tSamme").onclick=()=>{algo="SAMME";render();};
+document.getElementById("tSammeR").onclick=()=>{algo="SAMMER";render();};
+document.getElementById("pUnder").onclick=()=>flash(1,1.0);
+document.getElementById("pSweet").onclick=()=>{algo="SAMMER";render();flash(500,0.1);};
+document.getElementById("pOver").onclick=()=>flash(1000,1.0);
+document.getElementById("sweep").onclick=function(){
+  const cells=[...document.querySelectorAll("td.cell")];let i=0,best=null;
+  this.disabled=true;const self=this;
+  const t=setInterval(()=>{
+    if(i>0)cells[i-1].style.outline="";
+    if(i>=cells.length){clearInterval(t);self.disabled=false;
+      if(best)flash(+best.dataset.n,+best.dataset.lr);return;}
+    const c=cells[i];
+    c.style.outline="3px solid #38bdf8";
+    const a=acc(+c.dataset.n,+c.dataset.lr);
+    if(!best||a>acc(+best.dataset.n,+best.dataset.lr))best=c;
+    i++;
+  },140);
+};
+render();
+</script>
+</body></html>

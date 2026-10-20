@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AdaBoost weights and alphas</title>
+<style>
+:root{--bg:#0f172a;--panel:#1e293b;--tx:#e2e8f0;--dim:#94a3b8;--acc:#38bdf8;--ok:#22d3ee;--warn:#fbbf24;--bad:#fb7185}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font:14px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:860px;margin:0 auto;padding:18px}
+h1{font-size:20px}h1 .em{color:var(--acc)}
+.sub{color:var(--dim);font-size:13px;margin:2px 0 12px}
+.dots{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.dots button{background:#0b1220;color:var(--dim);border:1px solid #334155;border-radius:50%;width:30px;height:30px;font-size:12px;cursor:pointer}
+.dots button.on{background:var(--acc);color:#082f49;font-weight:700;border-color:var(--acc)}
+.card{background:var(--panel);border:1px solid #334155;border-radius:10px;padding:16px;min-height:380px}
+.card h2{font-size:16px;margin-bottom:8px;color:#fff}
+.card p{margin:6px 0}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0}
+th,td{border:1px solid #334155;padding:6px 8px;text-align:center}
+th{background:#0b1220;color:var(--dim);font-weight:600}
+.mis{color:var(--warn);font-weight:700}.ok{color:var(--ok)}
+.formula{background:#0b1220;border:1px solid #334155;border-radius:8px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13.5px;color:#fff;margin:10px 0}
+.formula .r{color:var(--warn)}
+.nav{display:flex;justify-content:space-between;margin-top:12px}
+.nav button{background:var(--acc);color:#082f49;border:none;border-radius:8px;padding:9px 18px;font-size:14px;font-weight:700;cursor:pointer}
+.nav button:disabled{opacity:.3;cursor:default}
+.bar{display:flex;height:44px;border-radius:8px;overflow:hidden;border:1px solid #334155;margin:10px 0}
+.bar div{display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#082f49}
+.draw{font-family:ui-monospace,Menlo,monospace;font-size:13px;background:#0b1220;border-radius:8px;padding:8px 12px;margin:6px 0;border:1px solid #334155}
+.note{color:var(--dim);font-size:12.5px}
+.k{color:var(--dim)}
+</style></head><body>
+<h1><span class="em">AdaBoost</span> — step by step: weights &amp; alphas</h1>
+<p class="sub">The exact worked example: 5 rows, one stump, every intermediate number shown. Click through the steps.</p>
+<div class="dots" id="dots"></div>
+<div class="card" id="card"></div>
+<div class="nav"><button id="prev">← Prev</button><button id="next">Next →</button></div>
+<script>
+"use strict";
+var rows=[{n:"R1",x1:3.2,x2:7,y:1},{n:"R2",x1:1.4,x2:3,y:1},{n:"R3",x1:3.9,x2:9,y:1},{n:"R4",x1:2.0,x2:5,y:1},{n:"R5",x1:1.1,x2:2,y:-1}];
+var MIS=[1,3]; // R2,R4 misclassified by the stump
+var WU=[0.24,0.16],WN=[0.25,0.1667]; // updated, normalized (index 0 = misclassified)
+function ystr(y){return y>0?"+1":"−1"}
+function wcell(i,arr){var v=MIS.indexOf(i)>=0?arr[0]:arr[1];return "<td class='"+(MIS.indexOf(i)>=0?"mis":"ok")+"'>"+v.toFixed(arr===WN?4:2).replace(/0+$/,"").replace(/\.$/,"")+"</td>"}
+function baseTable(wfn){
+ var h="<table><tr><th>row</th><th>X1</th><th>X2</th><th>y</th><th>stump says</th><th>weight</th></tr>";
+ rows.forEach(function(r,i){var mis=MIS.indexOf(i)>=0,s=r.x1>2.5?1:-1;
+  h+="<tr><td><b>"+r.n+"</b></td><td>"+r.x1+"</td><td>"+r.x2+"</td><td>"+ystr(r.y)+"</td><td class='"+(mis?"mis":"ok")+"'>"+ystr(s)+(mis?" ✕":" ✓")+"</td>"+wfn(i)+"</tr>"});
+ return h+"</table>";
+}
+var steps=[
+{ t:"Step 1 — equal sample weights",
+  h:"<p>Five rows, so every row starts with the same sample weight:</p><div class='formula'>w<sub>i</sub> = 1/n = 1/5 = <span class='r'>0.2</span> &nbsp;→&nbsp; Σw = 1.0</div>"+
+    baseTable(function(){return "<td>0.2</td>"})+
+    "<p class='note'>The weights always sum to 1 — they are a probability distribution over the rows.</p>"},
+{ t:"Step 2 — train the stump, measure its weighted error",
+  h:"<p>Train one decision stump (best information-gain split). This one splits on X1:</p><div class='formula'>stump: X1 &gt; 2.5 → <span class='r'>+1</span>, else <span class='r'>−1</span></div>"+
+    baseTable(function(){return "<td>0.2</td>"})+
+    "<p>Error is <b>weighted</b>: add the weights of the missed rows.</p><div class='formula'>ε = 0.2 (R2) + 0.2 (R4) = <span class='r'>0.4</span></div>"},
+{ t:"Step 3 — the stump's say: alpha",
+  h:"<p>How much this stump gets to vote depends only on its error:</p><div class='formula'>α = ½ · ln((1 − ε)/ε) = ½ · ln(0.6/0.4) = ½ · ln(1.5) ≈ <span class='r'>0.20</span></div>"+
+    "<p class='note'>Sanity anchors: a perfect stump (ε→0) gets a huge say; a coin-toss stump (ε=0.5) gets <b>zero</b> say; a always-wrong stump (ε→1) gets a large <b>negative</b> say — flip its answers and it becomes useful.</p>"+
+    "<div class='formula'>say of stump 1: α₁ ≈ <span class='r'>0.20</span></div>"},
+{ t:"Step 4 — boost the mistakes: update the weights",
+  h:"<p>Multiplicative update — missed rows get heavier, correct rows get lighter:</p>"+
+    "<div class='formula'>missed: w × e<sup>+α</sup> = 0.2 × e<sup>0.2</sup> ≈ <span class='r'>0.24</span><br>correct: w × e<sup>−α</sup> = 0.2 × e<sup>−0.2</sup> ≈ <span class='r'>0.16</span></div>"+
+    baseTable(function(i){return wcell(i,WU)})+
+    "<p class='note'>R2 and R4 (the mistakes) grew from 0.2 → 0.24. The next stump will be forced to care about them.</p>"},
+{ t:"Step 5 — normalize the weights",
+  h:"<p>Divide every weight by the total so they sum to 1 again:</p><div class='formula'>Σw = 2×0.24 + 3×0.16 = <span class='r'>0.96</span><br>missed: 0.24/0.96 = <span class='r'>0.25</span> &nbsp;·&nbsp; correct: 0.16/0.96 ≈ <span class='r'>0.1667</span><br>check: 2×0.25 + 3×0.1667 ≈ 1.0 ✓</div>"+
+    baseTable(function(i){return wcell(i,WN)})},
+{ t:"Step 6 — weighted resampling: build the next dataset",
+  h:"<p>Turn the weights into ranges on [0, 1], draw 5 random numbers, and pick the row each lands on:</p>"+
+    "<div class='bar'><div style='width:16.67%;background:#38bdf8'>R1</div><div style='width:25%;background:#fbbf24'>R2</div><div style='width:16.67%;background:#38bdf8'>R3</div><div style='width:25%;background:#fbbf24'>R4</div><div style='width:16.66%;background:#38bdf8'>R5</div></div>"+
+    "<div class='draw'>draw 0.12 → <b class='ok'>R1</b><br>draw 0.35 → <b class='mis'>R2</b><br>draw 0.71 → <b class='mis'>R4</b><br>draw 0.30 → <b class='mis'>R2</b> (again!)<br>draw 0.88 → <b class='ok'>R5</b></div>"+
+    "<div class='formula'>new dataset = [ R1, R2, R4, R2, R5 ]</div>"+
+    "<p class='note'>R2 (a mistake) now appears <b>twice</b> — the hard rows are over-represented, so the next stump cannot ignore them.</p>"},
+{ t:"Step 7 — repeat, then the final vote",
+  h:"<p>Repeat the cycle on the new dataset: train stump 2 → its error → its alpha → update weights again — for as many stumps as you want.</p>"+
+    "<p>Final prediction is the alpha-weighted majority vote:</p><div class='formula'>F(x) = sign( α₁·h₁(x) + α₂·h₂(x) + … )</div>"+
+    "<p class='note'>Each h<sub>t</sub>(x) is ±1, each α<sub>t</sub> is that stump's say. Positive total → +1, negative → −1. The “boosting” in AdaBoost is exactly Step 4: boosting the weight of every mistake, round after round.</p>"}
+];
+var cur=0,card=document.getElementById("card"),dots=document.getElementById("dots"),
+    prev=document.getElementById("prev"),next=document.getElementById("next");
+steps.forEach(function(s,i){var b=document.createElement("button");b.textContent=i+1;b.onclick=function(){cur=i;render()};dots.appendChild(b)});
+function render(){
+ var s=steps[cur];card.innerHTML="<h2>"+s.t+"</h2>"+s.h;
+ var ds=dots.children;for(var i=0;i<ds.length;i++)ds[i].className=i===cur?"on":"";
+ prev.disabled=cur===0;next.disabled=cur===steps.length-1;
+}
+prev.onclick=function(){if(cur>0){cur--;render()}};
+next.onclick=function(){if(cur<steps.length-1){cur++;render()}};
+render();
+</script></body></html>

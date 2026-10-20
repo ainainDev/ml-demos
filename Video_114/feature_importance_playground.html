@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Feature Importance Playground</title>
+<style>
+  :root{--bg:#0f172a;--panel:#1e293b;--line:#334155;--blue:#38bdf8;--green:#22c55e;--amber:#f59e0b;--txt:#e2e8f0;--dim:#94a3b8}
+  *{box-sizing:border-box;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  body{margin:0;background:var(--bg);color:var(--txt);padding:18px;max-width:860px;margin-inline:auto}
+  h1{font-size:1.35rem;margin:0 0 4px}
+  p.sub{color:var(--dim);font-size:.9rem;margin:0 0 16px;line-height:1.5}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  .feat{margin:12px 0}
+  .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+  .name{font-weight:700;font-size:.92rem}
+  .score{font-variant-numeric:tabular-nums;color:var(--blue);font-weight:700;font-size:.9rem}
+  .track{background:#0b1220;border-radius:8px;height:30px;position:relative;overflow:hidden}
+  .fill{height:100%;border-radius:8px;background:linear-gradient(90deg,#0ea5e9,#22c55e);transition:width .6s ease;display:flex;align-items:center}
+  .pct{position:absolute;right:10px;top:0;bottom:0;display:flex;align-items:center;font-size:.8rem;color:var(--dim)}
+  button.shuffle{background:#334155;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:4px 10px;font-size:.78rem;cursor:pointer;font-weight:600}
+  button.shuffle:hover{border-color:var(--amber)}
+  button.big{background:var(--blue);color:#0f172a;border:0;border-radius:8px;padding:9px 14px;font-weight:700;cursor:pointer;font-size:.88rem;margin-right:8px}
+  .note{font-size:.82rem;color:var(--dim);line-height:1.55}
+  .theory{background:#0b1220;border-left:3px solid var(--blue);padding:8px 12px;border-radius:0 8px 8px 0;font-size:.85rem;margin-top:10px;line-height:1.6}
+  code{background:#0b1220;padding:1px 6px;border-radius:5px;color:var(--blue)}
+  .log{font-size:.82rem;color:var(--dim);margin-top:10px;min-height:2.6em;line-height:1.5}
+  .log b{color:var(--amber)}
+  .killed .name{text-decoration:line-through;color:var(--dim)}
+  .killed .score{color:var(--dim)}
+</style>
+</head>
+<body>
+<h1>📊 Feature Importance Playground</h1>
+<p class="sub">A Random Forest scores every column by how much impurity it removes across all its splits. Scores are <b>normalized to sum to 1</b> — so this is a pie chart, not a report card: knock one feature down and the others must rise. Try <b>shuffling</b> a feature (breaking its link to the target, like <code>permutation_importance</code> does) and watch its bar collapse.</p>
+
+<div class="panel">
+  <div id="bars"></div>
+  <div style="margin-top:12px">
+    <button class="big" id="restore">↺ Restore all features</button>
+  </div>
+  <div class="log" id="log">Shuffle a feature to see what happens to its importance score.</div>
+</div>
+
+<div class="panel">
+  <h3 style="margin:0 0 8px;font-size:1rem">🧮 How each bar is computed (Gini importance)</h3>
+  <div class="theory">
+    <b>Node importance:</b> NI(j) = (n<sub>j</sub>/n)·I(j) − (n<sub>left</sub>/n)·I(left) − (n<sub>right</sub>/n)·I(right)<br>
+    (weighted impurity before the split, minus weighted impurities of the two children)<br><br>
+    <b>Feature importance (one tree):</b> sum NI over every node split on that feature, ÷ sum of NI over all split nodes → sums to 1.<br><br>
+    <b>Random Forest:</b> each tree computes its own importances, the forest reports the <b>average</b> across trees.
+  </div>
+  <p class="note" style="margin-top:10px">In code: <code>rf = RandomForestClassifier(n_estimators=100)</code>; <code>rf.fit(X, y)</code>; then <code>rf.feature_importances_</code>. ⚠️ sklearn warns that impurity-based importance can flatter high-cardinality features — <code>permutation_importance</code> is the safer check there.</p>
+</div>
+
+<script>
+(function(){
+  var base=[
+    {name:'CGPA', w:0.34, why:'grades track academic outcomes directly'},
+    {name:'IQ', w:0.26, why:'cognitive ability splits cleanly'},
+    {name:'Study Hours / day', w:0.18, why:'effort separates pass from fail'},
+    {name:'Attendance %', w:0.13, why:'helps, but overlaps with study hours'},
+    {name:'Distance from college', w:0.06, why:'weak, noisy signal'},
+    {name:"Favourite colour", w:0.03, why:'basically random noise'}
+  ];
+  var state=base.map(function(f){return {name:f.name,w:f.w,base:f.w,why:f.why,shuffled:false};});
+  var barsEl=document.getElementById('bars');
+  function render(){
+    barsEl.innerHTML='';
+    var total=state.reduce(function(s,f){return s+f.w;},0);
+    state.forEach(function(f,i){
+      var imp=f.w/total;
+      var div=document.createElement('div');
+      div.className='feat'+(f.shuffled?' killed':'');
+      div.innerHTML='<div class="head"><span class="name">'+f.name+'</span>'+
+        '<span><span class="score">'+imp.toFixed(3)+'</span> '+
+        '<button class="shuffle" data-i="'+i+'">'+(f.shuffled?'restore':'🔀 shuffle')+'</button></span></div>'+
+        '<div class="track"><div class="fill" style="width:'+(imp*100).toFixed(1)+'%"></div><span class="pct">'+(imp*100).toFixed(1)+'%</span></div>';
+      barsEl.appendChild(div);
+    });
+    barsEl.querySelectorAll('button.shuffle').forEach(function(b){
+      b.onclick=function(){toggle(+b.getAttribute('data-i'));};
+    });
+  }
+  function toggle(i){
+    var f=state[i], log=document.getElementById('log');
+    f.shuffled=!f.shuffled;
+    if(f.shuffled){
+      f.w=0.004+Math.random()*0.004; // shuffled ≈ noise
+      log.innerHTML='<b>'+f.name+'</b> shuffled → its impurity reduction collapses to ~0. Because scores are normalized, the remaining features <b>gain</b> share. This is the whole idea behind <code>permutation_importance</code>: break a feature and measure what is lost.';
+    }else{
+      f.w=f.base;
+      log.innerHTML='<b>'+f.name+'</b> restored → importances re-normalize to the original values.';
+    }
+    render();
+  }
+  document.getElementById('restore').onclick=function(){
+    state.forEach(function(f){f.shuffled=false;f.w=f.base;});
+    document.getElementById('log').textContent='All features restored.';
+    render();
+  };
+  render();
+})();
+</script>
+</body>
+</html>

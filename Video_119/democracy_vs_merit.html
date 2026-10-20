@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bagging vs Boosting — democracy vs merit</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f172a; color: #e2e8f0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         padding: 18px; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 1.45rem; text-align: center; margin-bottom: 4px; }
+  .sub { text-align: center; color: #94a3b8; font-size: .9rem; margin-bottom: 16px; }
+  .sample { text-align: center; background: #1e293b; border: 1px solid #334155; border-radius: 10px;
+            padding: 10px; margin-bottom: 16px; font-size: .95rem; }
+  .sample b { color: #fbbf24; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 8px; margin-bottom: 18px; }
+  .member { background: #1e293b; border: 2px solid #334155; border-radius: 10px; padding: 8px 6px;
+            text-align: center; cursor: pointer; user-select: none; transition: border-color .15s, transform .1s; }
+  .member:hover { transform: translateY(-2px); }
+  .member.correct { border-color: #4ade80; }
+  .member.wrong { border-color: #f87171; }
+  .member .name { font-weight: 700; font-size: .85rem; }
+  .member .alpha { font-size: .72rem; color: #94a3b8; margin: 2px 0 4px; }
+  .wbar { height: 6px; background: #334155; border-radius: 3px; margin-bottom: 6px; overflow: hidden; }
+  .wbar i { display: block; height: 100%; background: linear-gradient(90deg, #f59e0b, #fbbf24); border-radius: 3px; }
+  .member .vote { font-size: 1.25rem; }
+  .member .lbl { font-size: .72rem; margin-top: 2px; }
+  .member.correct .lbl { color: #4ade80; } .member.wrong .lbl { color: #f87171; }
+  .hint { text-align: center; color: #94a3b8; font-size: .8rem; margin: -8px 0 18px; }
+  .results { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 600px) { .results { grid-template-columns: 1fr; } }
+  .panel { border-radius: 12px; padding: 14px; border: 1px solid; }
+  .panel.bag { background: rgba(45,212,191,.07); border-color: #2dd4bf; }
+  .panel.boost { background: rgba(251,191,36,.07); border-color: #fbbf24; }
+  .panel h2 { font-size: 1rem; margin-bottom: 8px; }
+  .panel.bag h2 { color: #2dd4bf; } .panel.boost h2 { color: #fbbf24; }
+  .tally { font-size: .85rem; line-height: 1.7; }
+  .verdict { margin-top: 8px; font-weight: 700; font-size: 1.02rem; }
+  .ok { color: #4ade80; } .bad { color: #f87171; }
+  .clash { margin-top: 14px; text-align: center; font-weight: 700; padding: 10px; border-radius: 10px;
+           background: #1e293b; border: 1px dashed #f472b6; color: #f472b6; display: none; }
+  .foot { margin-top: 16px; font-size: .82rem; color: #94a3b8; line-height: 1.6; text-align: center; }
+</style>
+</head>
+<body>
+<h1>🗳️ Democracy vs ⚖️ Merit</h1>
+<p class="sub">One sample, seven classifiers — bagging counts every vote equally, boosting weighs votes by skill.</p>
+<div class="sample">Test sample: a photo of a <b>🐱 CAT</b> &nbsp;·&nbsp; click any classifier to flip its prediction</div>
+<div class="grid" id="members"></div>
+<p class="hint">👆 toggle members and watch when the two ensembles disagree</p>
+<div class="results">
+  <div class="panel bag">
+    <h2>🗳️ BAGGING — majority vote</h2>
+    <div class="tally" id="bagTally"></div>
+    <div class="verdict" id="bagVerdict"></div>
+  </div>
+  <div class="panel boost">
+    <h2>⚖️ BOOSTING — weighted vote</h2>
+    <div class="tally" id="boostTally"></div>
+    <div class="verdict" id="boostVerdict"></div>
+  </div>
+</div>
+<div class="clash" id="clash"></div>
+<p class="foot">Each member's weight α = ½·ln(accuracy ÷ (1 − accuracy)) — the classic boosting weight.
+Strong members get a louder voice; in bagging every member gets exactly one vote.</p>
+
+<script>
+(function () {
+  "use strict";
+  // accuracy -> alpha = 0.5 * ln(p/(1-p)); rounded to 2 decimals
+  var acc = [0.90, 0.85, 0.78, 0.70, 0.62, 0.55, 0.52];
+  var members = acc.map(function (p, i) {
+    var a = 0.5 * Math.log(p / (1 - p));
+    return { name: "M" + (i + 1), alpha: Math.round(a * 100) / 100,
+             // start: the two strongest are wrong, the rest are right
+             correct: i >= 2 };
+  });
+  var maxA = members[0].alpha;
+  var grid = document.getElementById("members");
+
+  function renderMembers() {
+    grid.innerHTML = "";
+    members.forEach(function (m, i) {
+      var d = document.createElement("div");
+      d.className = "member " + (m.correct ? "correct" : "wrong");
+      d.title = "Click to flip " + m.name + "'s prediction";
+      d.innerHTML =
+        '<div class="name">' + m.name + "</div>" +
+        '<div class="alpha">skill α = ' + m.alpha.toFixed(2) + "</div>" +
+        '<div class="wbar"><i style="width:' + Math.round(100 * m.alpha / maxA) + '%"></i></div>' +
+        '<div class="vote">' + (m.correct ? "🐱" : "🐶") + "</div>" +
+        '<div class="lbl">' + (m.correct ? "says CAT ✓" : "says DOG ✗") + "</div>";
+      d.addEventListener("click", function () { members[i].correct = !members[i].correct; update(); });
+      grid.appendChild(d);
+    });
+  }
+
+  function update() {
+    renderMembers();
+    var nCat = 0, wCat = 0, wDog = 0, i, m;
+    for (i = 0; i < members.length; i++) {
+      m = members[i];
+      if (m.correct) { nCat++; wCat += m.alpha; } else { wDog += m.alpha; }
+    }
+    var nDog = members.length - nCat;
+    var bagCat = nCat > nDog;
+    var boostCat = wCat > wDog;
+
+    document.getElementById("bagTally").innerHTML =
+      "🐱 CAT: <b>" + nCat + "</b> votes &nbsp;·&nbsp; 🐶 DOG: <b>" + nDog + "</b> votes<br>" +
+      "every vote counts the same";
+    document.getElementById("bagVerdict").innerHTML =
+      "→ predicts <b>" + (bagCat ? "🐱 CAT" : "🐶 DOG") + "</b> " +
+      '<span class="' + (bagCat ? "ok" : "bad") + '">' + (bagCat ? "✓ correct" : "✗ wrong") + "</span>";
+
+    document.getElementById("boostTally").innerHTML =
+      "🐱 CAT weight: <b>" + wCat.toFixed(2) + "</b><br>" +
+      "🐶 DOG weight: <b>" + wDog.toFixed(2) + "</b><br>" +
+      "votes are scaled by each member's skill α";
+    document.getElementById("boostVerdict").innerHTML =
+      "→ predicts <b>" + (boostCat ? "🐱 CAT" : "🐶 DOG") + "</b> " +
+      '<span class="' + (boostCat ? "ok" : "bad") + '">' + (boostCat ? "✓ correct" : "✗ wrong") + "</span>";
+
+    var clash = document.getElementById("clash");
+    if (bagCat !== boostCat) {
+      clash.style.display = "block";
+      clash.textContent = bagCat
+        ? "⚡ The ensembles DISAGREE: the majority is right, but the strongest members outvoted it — merit backfired!"
+        : "⚡ The ensembles DISAGREE: the majority is wrong, but the strongest members carried the day — merit saved it!";
+    } else {
+      clash.style.display = "none";
+    }
+  }
+  update();
+})();
+</script>
+</body>
+</html>

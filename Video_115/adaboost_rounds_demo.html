@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AdaBoost intuition: rounds</title>
+<style>
+:root{--bg:#0f172a;--panel:#1e293b;--tx:#e2e8f0;--dim:#94a3b8;--acc:#38bdf8;--pos:#22d3ee;--neg:#fb7185;--warn:#fbbf24}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font:14px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:1060px;margin:0 auto;padding:18px}
+h1{font-size:20px;margin-bottom:2px}h1 .em{color:var(--acc)}
+.sub{color:var(--dim);font-size:13px;margin-bottom:12px}
+.wrap{display:grid;grid-template-columns:1.35fr 1fr;gap:14px}
+@media(max-width:860px){.wrap{grid-template-columns:1fr}}
+canvas{background:#0b1220;border:1px solid #334155;border-radius:10px;width:100%;height:auto;display:block}
+.card{background:var(--panel);border:1px solid #334155;border-radius:10px;padding:14px}
+.steps{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.steps button{background:#0b1220;color:var(--dim);border:1px solid #334155;border-radius:8px;padding:7px 11px;font-size:13px;cursor:pointer}
+.steps button.on{background:var(--acc);color:#082f49;border-color:var(--acc);font-weight:700}
+.steps button:hover{border-color:var(--acc)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13px;margin:8px 0}
+.kv b{color:#fff}.kv .k{color:var(--dim)}
+table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
+th,td{border:1px solid #334155;padding:5px 7px;text-align:center}
+th{background:#0b1220;color:var(--dim);font-weight:600}
+.mis{color:var(--warn);font-weight:700}
+.ok{color:var(--pos)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--dim);margin-top:8px}
+.dot{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+.note{font-size:12.5px;color:var(--dim);margin-top:10px}
+.formula{background:#0b1220;border:1px solid #334155;border-radius:8px;padding:8px 10px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#fff;margin-top:8px}
+</style></head><body>
+<h1><span class="em">AdaBoost</span> — geometric intuition, round by round</h1>
+<p class="sub">One decision stump at a time. Each stump fixes the last round's mistakes, earns a weighted say (α), and the final boundary is the sign of the weighted vote.</p>
+<div class="steps" id="steps"></div>
+<div class="wrap">
+<div><canvas id="cv" width="640" height="480"></canvas>
+<div class="legend">
+<span><span class="dot" style="background:#22d3ee"></span>placed (+1)</span>
+<span><span class="dot" style="background:#fb7185"></span>not placed (−1)</span>
+<span><span class="dot" style="background:#fbbf24"></span>misclassified this round</span>
+<span style="color:#94a3b8">point size ∝ sample weight</span>
+</div></div>
+<div class="card" id="info"></div>
+</div>
+<p class="note">Toy data: 10 students, features CGPA (x) and IQ (y). The numbers below are the real AdaBoost quantities computed from these points — weighted error, α = ½·ln((1−ε)/ε), and the multiplicative weight update.</p>
+<script>
+"use strict";
+// points: [CGPA, IQ, label]  (+1 placed, -1 not placed)
+var P=[[7.5,7.3,1],[8.5,6.9,1],[8.1,8.5,1],[6.7,9.3,1],[3.6,5.7,-1],[3.7,4.4,-1],[4.8,7.3,-1],[3.9,4.9,-1],[4.9,6.4,1],[7.9,10.3,-1]];
+// stumps: [axis, threshold, polarity, alpha, weightedError, misIdx]  (real AdaBoost run on P)
+var S=[
+ {ax:"x",t:4.85,pol:1, a:1.0986,e:0.10, mis:[9], w:[.0556,.0556,.0556,.0556,.0556,.0556,.0556,.0556,.0556,.5]},
+ {ax:"x",t:8.00,pol:1, a:0.8047,e:0.1667,mis:[0,3,8], w:[.1667,.0333,.0333,.1667,.0333,.0333,.0333,.0333,.1667,.3]},
+ {ax:"y",t:9.80,pol:-1,a:0.9359,e:0.1333,mis:[4,5,6,7], w:[.0962,.0192,.0192,.0962,.125,.125,.125,.125,.0962,.1731]}
+];
+var W0=[.1,.1,.1,.1,.1,.1,.1,.1,.1,.1];
+var X0=3,X1=10,Y0=3.5,Y1=13.5;
+var cv=document.getElementById("cv"),cx=cv.getContext("2d");
+function X(x){return 52+(x-X0)/(X1-X0)*(cv.width-72)}
+function Y(y){return cv.height-44-(y-Y0)/(Y1-Y0)*(cv.height-64)}
+function stumpPred(s,pt){var v=s.ax==="x"?pt[0]:pt[1];var r=v>s.t?1:-1;return s.pol===1?r:-r}
+function ensemble(k,pt){var f=0;for(var i=0;i<k;i++)f+=S[i].a*stumpPred(S[i],pt);return f}
+var labels=["Start","Round 1","Round 2","Round 3","Final vote"];
+var stepsEl=document.getElementById("steps"),info=document.getElementById("info"),cur=0;
+labels.forEach(function(L,i){var b=document.createElement("button");b.textContent=L;b.onclick=function(){cur=i;draw()};stepsEl.appendChild(b)});
+function axes(){
+ cx.strokeStyle="#475569";cx.fillStyle="#94a3b8";cx.font="11px system-ui";cx.lineWidth=1;
+ cx.beginPath();cx.moveTo(52,10);cx.lineTo(52,cv.height-44);cx.lineTo(cv.width-12,cv.height-44);cx.stroke();
+ for(var x=4;x<=10;x++){cx.beginPath();cx.moveTo(X(x),cv.height-44);cx.lineTo(X(x),cv.height-38);cx.stroke();cx.fillText(x,X(x)-3,cv.height-26)}
+ for(var y=4;y<=13;y++){cx.beginPath();cx.moveTo(46,Y(y));cx.lineTo(52,Y(y));cx.stroke();cx.fillText(y,26,Y(y)+4)}
+ cx.fillText("CGPA →",cv.width-70,cv.height-26);cx.save();cx.translate(12,Y(8.5));cx.rotate(-Math.PI/2);cx.fillText("IQ →",-14,0);cx.restore();
+}
+function heat(k){
+ var n=56,m=42,cw=(cv.width-72)/n,ch=(cv.height-64)/m,sumA=S[0].a+S[1].a+S[2].a;
+ for(var i=0;i<n;i++)for(var j=0;j<m;j++){
+  var px=X0+(i+.5)/n*(X1-X0),py=Y0+(j+.5)/m*(Y1-Y0),f=ensemble(k,[px,py,0]),v=Math.min(1,Math.abs(f)/sumA);
+  cx.fillStyle=f>0?"rgba(34,211,238,"+(0.10+0.22*v)+")":"rgba(251,113,133,"+(0.10+0.22*v)+")";
+  cx.fillRect(52+i*cw,cv.height-44-(j+1)*ch,cw+0.5,ch+0.5);
+ }
+}
+function stumpLine(s,col){
+ cx.strokeStyle=col;cx.lineWidth=2.5;cx.setLineDash([8,6]);cx.beginPath();
+ if(s.ax==="x"){cx.moveTo(X(s.t),10);cx.lineTo(X(s.t),cv.height-44)}else{cx.moveTo(52,Y(s.t));cx.lineTo(cv.width-12,Y(s.t))}
+ cx.stroke();cx.setLineDash([]);
+ cx.fillStyle=col;cx.font="bold 12px system-ui";
+ var txt="stump: "+(s.ax==="x"?"CGPA":"IQ")+(s.pol===1?" > ":" ≤ ")+s.t.toFixed(2)+" → +1";
+ if(s.ax==="x")cx.fillText(txt,Math.min(X(s.t)+8,cv.width-200),30);else cx.fillText(txt,60,Y(s.t)-10);
+}
+function drawPts(w,mis){
+ for(var i=0;i<P.length;i++){
+  var r=5+24*Math.sqrt(w[i]);
+  cx.beginPath();cx.arc(X(P[i][0]),Y(P[i][1]),r,0,7);
+  cx.fillStyle=P[i][2]>0?"rgba(34,211,238,.85)":"rgba(251,113,133,.85)";cx.fill();
+  cx.lineWidth=1.5;cx.strokeStyle="#0f172a";cx.stroke();
+  if(mis.indexOf(i)>=0){cx.beginPath();cx.arc(X(P[i][0]),Y(P[i][1]),r+5,0,7);cx.strokeStyle="#fbbf24";cx.lineWidth=3;cx.stroke();
+   cx.fillStyle="#fbbf24";cx.font="bold 12px system-ui";cx.fillText("✕",X(P[i][0])-5,Y(P[i][1])+5)}
+  cx.fillStyle="#0f172a";cx.font="bold 10px system-ui";cx.fillText("S"+(i+1),X(P[i][0])-7,Y(P[i][1])+3.5);
+ }
+}
+function wTable(w,mis){
+ var h="<table><tr><th>student</th>";for(var i=0;i<10;i++)h+="<th>S"+(i+1)+"</th>";h+="</tr><tr><th>weight</th>";
+ for(i=0;i<10;i++)h+="<td class='"+(mis.indexOf(i)>=0?"mis":"ok")+"'>"+w[i].toFixed(mis.indexOf(i)>=0?3:3)+"</td>";
+ return h+"</tr></table>";
+}
+function draw(){
+ var bs=stepsEl.children;for(var i=0;i<bs.length;i++)bs[i].className=i===cur?"on":"";
+ cx.clearRect(0,0,cv.width,cv.height);
+ var k=Math.min(cur,3);
+ if(cur===4){heat(3);axes();drawPts(S[2].w,[]);info.innerHTML=finalInfo();return}
+ heat(k);axes();
+ var w=cur===0?W0:S[cur-1].w, mis=cur===0?[]:S[cur-1].mis;
+ if(cur>0)stumpLine(S[cur-1],"#fbbf24");
+ drawPts(w,mis);
+ info.innerHTML=roundInfo(cur);
+}
+function roundInfo(c){
+ if(c===0)return "<h3>Start — equal weights</h3><div class='kv'><span class='k'>sample weights</span><b>w = 1/10 = 0.10 for every student</b></div>"+wTable(W0,[])+"<p class='note'>Every stump starts on a level playing field. Step to Round 1 to train the first decision stump (single split, best information gain).</p>";
+ var s=S[c-1],wprev=c===1?W0:S[c-2].w;
+ var dir=s.ax==="x"?(s.pol===1?"CGPA > ":"CGPA ≤ "):(s.pol===1?"IQ > ":"IQ ≤ ");
+ var h="<h3>Round "+c+" — stump "+c+"</h3><div class='kv'>"+
+ "<span class='k'>stump rule</span><b>"+dir+s.t.toFixed(2)+" → +1, else −1</b>"+
+ "<span class='k'>weighted error ε</span><b>"+s.e.toFixed(4)+"</b>"+
+ "<span class='k'>say α = ½·ln((1−ε)/ε)</span><b>"+s.a.toFixed(4)+"</b>"+
+ "<span class='k'>misses</span><b class='mis'>"+s.mis.map(function(i){return "S"+(i+1)}).join(", ")+"</b></div>"+
+ wTable(s.w,s.mis)+
+ "<p class='note'>The "+s.mis.length+" missed student"+(s.mis.length>1?"s":"")+" got up-weighted (×e<sup>+α</sup>) — watch the circles grow. Correct ones shrank (×e<sup>−α</sup>). The next stump trains on these new weights, so it is forced to fix these mistakes.</p>";
+ return h;
+}
+function finalInfo(){
+ var votes=P.map(function(p,i){return S.map(function(s){return (s.a*stumpPred(s,p)).toFixed(2)})});
+ var h="<h3>Final model — weighted vote</h3><div class='formula'>F(x) = sign(α₁·f₁(x) + α₂·f₂(x) + α₃·f₃(x))</div>"+
+ "<div class='kv'><span class='k'>alphas</span><b>α₁=1.099 · α₂=0.805 · α₃=0.936</b><span class='k'>training result</span><b class='ok'>10 / 10 students correct</b></div>"+
+ "<table><tr><th></th><th>α₁·f₁</th><th>α₂·f₂</th><th>α₃·f₃</th><th>sum</th><th>pred</th><th>true</th></tr>";
+ for(var i=0;i<10;i++){var sm=votes[i].reduce(function(a,b){return a+parseFloat(b)},0);
+  h+="<tr><td>S"+(i+1)+"</td><td>"+votes[i].join("</td><td>")+"</td><td><b>"+sm.toFixed(2)+"</b></td><td class='ok'>"+(sm>0?"+1":"−1")+"</td><td>"+(P[i][2]>0?"+1":"−1")+"</td></tr>"}
+ return h+"</table><p class='note'>Layer the three stumps' regions and their weighted votes carve the final decision boundary (background tint). Every stump is weak on its own; the weighted sum is strong.</p>";
+}
+draw();
+</script></body></html>

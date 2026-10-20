@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gradient Boosting — fit the mistakes, not the target</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;padding:18px;max-width:940px;margin:0 auto}
+  h1{font-size:1.45rem;text-align:center;margin-bottom:4px}
+  p.sub{text-align:center;color:#94a3b8;font-size:.9rem;margin-bottom:16px}
+  .controls{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:14px;margin-bottom:14px}
+  .row{display:flex;align-items:center;gap:12px;margin:10px 0;flex-wrap:wrap}
+  label{font-size:.88rem;color:#cbd5e1;min-width:150px}
+  label b{color:#fbbf24}
+  input[type=range]{flex:1;min-width:160px;accent-color:#38bdf8}
+  button{background:#38bdf8;color:#0f172a;border:0;border-radius:8px;padding:9px 14px;font-weight:700;cursor:pointer;font-size:.88rem}
+  button.ghost{background:#334155;color:#e2e8f0}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+  .stat{background:#0b1220;border:1px solid #334155;border-radius:10px;padding:10px;text-align:center}
+  .stat .v{font-size:1.25rem;font-weight:800}
+  .stat .k{font-size:.72rem;color:#94a3b8;margin-top:2px}
+  .panels{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:640px){.panels{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}}
+  .panel{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:12px}
+  .panel h3{font-size:.95rem;margin-bottom:8px}
+  canvas{width:100%;height:230px;background:#0b1220;border:1px solid #334155;border-radius:10px}
+  .legend{display:flex;gap:14px;font-size:.78rem;color:#94a3b8;margin-top:6px;flex-wrap:wrap}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px}
+  .foot{margin-top:14px;font-size:.82rem;color:#94a3b8;line-height:1.6;text-align:center}
+  .formula{background:#0b1220;border-left:3px solid #38bdf8;padding:8px 12px;border-radius:0 8px 8px 0;font-size:.85rem;margin-top:10px}
+</style>
+</head>
+<body>
+<h1>🌱 Gradient Boosting — fit the mistakes</h1>
+<p class="sub">Round 0 starts at the <b>mean</b> of the target. Each new tree learns the <b>residuals</b> (errors) of everything so far, and its fix is scaled by the <b>learning rate</b>.</p>
+
+<div class="controls">
+  <div class="row">
+    <label>Boosting rounds: <b id="rLab">3</b></label>
+    <input type="range" id="rounds" min="0" max="12" value="3" step="1">
+  </div>
+  <div class="row">
+    <label>Learning rate: <b id="lrLab">0.30</b></label>
+    <input type="range" id="lr" min="0.02" max="1" value="0.3" step="0.02">
+  </div>
+  <div class="row">
+    <button id="add">▶ Add one round</button>
+    <button id="reset" class="ghost">Reset</button>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat"><div class="v" id="sRound" style="color:#38bdf8">3</div><div class="k">rounds trained</div></div>
+  <div class="stat"><div class="v" id="sMse" style="color:#22c55e">—</div><div class="k">current MSE</div></div>
+  <div class="stat"><div class="v" id="sRes" style="color:#f59e0b">—</div><div class="k">max |residual|</div></div>
+  <div class="stat"><div class="v" id="sDrop" style="color:#f472b6">—</div><div class="k">error reduced vs mean</div></div>
+</div>
+
+<div class="panels">
+  <div class="panel">
+    <h3>📈 Model fit vs data</h3>
+    <canvas id="fit" width="840" height="230"></canvas>
+    <div class="legend">
+      <span><span class="dot" style="background:#64748b"></span>training points</span>
+      <span><span class="dot" style="background:#38bdf8"></span>boosted prediction</span>
+      <span><span class="dot" style="background:#f59e0b"></span>true curve</span>
+    </div>
+  </div>
+  <div class="panel">
+    <h3>📉 Error falls as trees are added</h3>
+    <canvas id="err" width="840" height="230"></canvas>
+    <div class="legend">
+      <span><span class="dot" style="background:#22c55e"></span>MSE after each round</span>
+      <span><span class="dot" style="background:#38bdf8"></span>current round</span>
+    </div>
+  </div>
+</div>
+
+<div class="formula">
+  <b>What's happening:</b> ŷ = <b>mean(y)</b> + lr × (tree₁ + tree₂ + …), where treeₖ is fitted on the <b>residuals</b> of the previous step. Lower the learning rate and watch the error curve: the steps shrink, so more rounds are needed — but the fit gets smoother and overfits less.
+</div>
+
+<p class="foot">The little trees are depth-2 regression trees (≤ 4 leaves), like the small trees in the lesson. Try learning rate 1.0 with 12 rounds vs 0.1 with 12 rounds: big steps learn fast but wiggle; small steps learn slowly but smoothly.</p>
+
+<script>
+(function () {
+  "use strict";
+  // ---- deterministic toy data ----
+  var seed = 12345;
+  function rnd() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+  var N = 60, X = [], Y = [];
+  for (var i = 0; i < N; i++) {
+    var x = i / (N - 1) * 10;
+    X.push(x);
+    Y.push(Math.sin(x) * 1.6 + x * 0.22 + (rnd() - 0.5) * 1.0);
+  }
+  var meanY = Y.reduce(function (a, b) { return a + b; }, 0) / N;
+
+  // ---- tiny depth-2 regression tree on one feature ----
+  var order = X.map(function (_, i) { return i; }).sort(function (a, b) { return X[a] - X[b]; });
+  function avg(arr) { return arr.reduce(function (a, b) { return a + b; }, 0) / arr.length; }
+  function sse(vals, m) { var s = 0; for (var i = 0; i < vals.length; i++) { var d = vals[i] - m; s += d * d; } return s; }
+  function bestSplit(idxs, r) {
+    var best = null;
+    for (var k = 3; k < idxs.length - 3; k++) {
+      var li = idxs.slice(0, k), ri = idxs.slice(k);
+      var lm = avg(li.map(function (i) { return r[i]; }));
+      var rm = avg(ri.map(function (i) { return r[i]; }));
+      var tot = sse(li.map(function (i) { return r[i]; }), lm) + sse(ri.map(function (i) { return r[i]; }), rm);
+      if (!best || tot < best.sse) best = { sse: tot, thr: (X[idxs[k - 1]] + X[idxs[k]]) / 2, left: li, right: ri };
+    }
+    return best;
+  }
+  function fitNode(idxs, r, depth) {
+    if (depth === 0 || idxs.length < 8) return { leaf: avg(idxs.map(function (i) { return r[i]; })) };
+    var sp = bestSplit(idxs, r);
+    if (!sp) return { leaf: avg(idxs.map(function (i) { return r[i]; })) };
+    return { thr: sp.thr, left: fitNode(sp.left, r, depth - 1), right: fitNode(sp.right, r, depth - 1) };
+  }
+  function fitTree(r) { return fitNode(order.slice(), r, 2); }
+  function predict(tree, x) {
+    var n = tree;
+    while (n.leaf === undefined) n = x <= n.thr ? n.left : n.right;
+    return n.leaf;
+  }
+
+  // ---- full boosting run, cached per (lr) ----
+  var cache = {};
+  function run(lr, rounds) {
+    var key = lr + "|" + rounds;
+    if (cache[key]) return cache[key];
+    var pred = X.map(function () { return meanY; });
+    var mseHist = [mseOf(pred)];
+    for (var k = 0; k < rounds; k++) {
+      var res = Y.map(function (y, i) { return y - pred[i]; });
+      var tree = fitTree(res);
+      pred = pred.map(function (p, i) { return p + lr * predict(tree, X[i]); });
+      mseHist.push(mseOf(pred));
+    }
+    var resFinal = Y.map(function (y, i) { return y - pred[i]; });
+    var out = { pred: pred, mseHist: mseHist, maxRes: Math.max.apply(null, resFinal.map(Math.abs)) };
+    cache[key] = out;
+    return out;
+  }
+  function mseOf(p) {
+    var s = 0;
+    for (var i = 0; i < N; i++) { var d = Y[i] - p[i]; s += d * d; }
+    return s / N;
+  }
+
+  // ---- UI ----
+  var roundsEl = document.getElementById("rounds"), lrEl = document.getElementById("lr");
+  function smoothFit(p) {
+    // evaluate the model on a fine grid: reuse residuals math via piecewise tree? cheap trick: interpolate
+    var pts = [];
+    var xs = X.slice().sort(function (a, b) { return a - b; });
+    var mp = {};
+    for (var i = 0; i < N; i++) mp[X[i].toFixed(6)] = p[i];
+    for (var g = 0; g <= 200; g++) {
+      var x = g / 200 * 10;
+      var j = 0; while (j < N - 1 && xs[j + 1] < x) j++;
+      var x0 = xs[j], x1 = xs[Math.min(j + 1, N - 1)];
+      var y0 = mp[x0.toFixed(6)], y1 = mp[x1.toFixed(6)];
+      var t = (x1 > x0) ? (x - x0) / (x1 - x0) : 0;
+      pts.push([x, y0 + t * (y1 - y0)]);
+    }
+    return pts;
+  }
+  function trueCurve() {
+    var pts = [];
+    for (var g = 0; g <= 200; g++) { var x = g / 200 * 10; pts.push([x, Math.sin(x) * 1.6 + x * 0.22]); }
+    return pts;
+  }
+  var TRUE = trueCurve();
+
+  function drawFit(pred) {
+    var c = document.getElementById("fit"), x = c.getContext("2d");
+    x.clearRect(0, 0, c.width, c.height);
+    var xMin = 0, xMax = 10, yMin = -4, yMax = 6;
+    function px(v) { return 44 + (v - xMin) / (xMax - xMin) * (c.width - 58); }
+    function py(v) { return c.height - 16 - (v - yMin) / (yMax - yMin) * (c.height - 28); }
+    // grid
+    x.strokeStyle = "#1e293b"; x.lineWidth = 1;
+    for (var g = 0; g <= 10; g += 2) { x.beginPath(); x.moveTo(px(g), 12); x.lineTo(px(g), c.height - 16); x.stroke(); }
+    // true curve
+    x.strokeStyle = "#f59e0b"; x.lineWidth = 2; x.setLineDash([6, 4]); x.beginPath();
+    TRUE.forEach(function (p, i) { if (i === 0) x.moveTo(px(p[0]), py(p[1])); else x.lineTo(px(p[0]), py(p[1])); });
+    x.stroke(); x.setLineDash([]);
+    // data points
+    x.fillStyle = "#64748b";
+    for (var i = 0; i < N; i++) { x.beginPath(); x.arc(px(X[i]), py(Y[i]), 3, 0, 7); x.fill(); }
+    // model fit
+    x.strokeStyle = "#38bdf8"; x.lineWidth = 3; x.beginPath();
+    smoothFit(pred).forEach(function (p, i) { if (i === 0) x.moveTo(px(p[0]), py(p[1])); else x.lineTo(px(p[0]), py(p[1])); });
+    x.stroke();
+    x.fillStyle = "#94a3b8"; x.font = "10px sans-serif"; x.fillText("0 rounds = flat mean line", 48, 22);
+  }
+  function drawErr(hist, rounds) {
+    var c = document.getElementById("err"), x = c.getContext("2d");
+    x.clearRect(0, 0, c.width, c.height);
+    var maxM = hist[0] * 1.05, minM = 0;
+    function px(i) { return 44 + i / 12 * (c.width - 58); }
+    function py(v) { return c.height - 16 - (v - minM) / (maxM - minM) * (c.height - 28); }
+    x.strokeStyle = "#1e293b"; x.lineWidth = 1;
+    [0, 0.5, 1].forEach(function (f) { var v = maxM * f; x.beginPath(); x.moveTo(44, py(v)); x.lineTo(c.width - 14, py(v)); x.stroke(); });
+    x.strokeStyle = "#22c55e"; x.lineWidth = 2; x.beginPath();
+    hist.forEach(function (v, i) { if (i === 0) x.moveTo(px(i), py(v)); else x.lineTo(px(i), py(v)); });
+    x.stroke();
+    x.fillStyle = "#38bdf8"; x.beginPath(); x.arc(px(rounds), py(hist[rounds]), 5, 0, 7); x.fill();
+    x.fillStyle = "#94a3b8"; x.font = "10px sans-serif";
+    x.fillText("round →", c.width - 70, c.height - 4);
+    x.fillText("MSE", 8, 20);
+  }
+  function update() {
+    var rounds = parseInt(roundsEl.value, 10), lr = parseFloat(lrEl.value);
+    document.getElementById("rLab").textContent = rounds;
+    document.getElementById("lrLab").textContent = lr.toFixed(2);
+    var out = run(lr, rounds);
+    document.getElementById("sRound").textContent = rounds;
+    document.getElementById("sMse").textContent = out.mseHist[rounds].toFixed(3);
+    document.getElementById("sRes").textContent = out.maxRes.toFixed(3);
+    var drop = (1 - out.mseHist[rounds] / out.mseHist[0]) * 100;
+    document.getElementById("sDrop").textContent = (drop >= 0 ? "−" : "+") + Math.abs(drop).toFixed(1) + "%";
+    drawFit(out.pred);
+    drawErr(out.mseHist, rounds);
+  }
+  roundsEl.oninput = update;
+  lrEl.oninput = function () { cache = {}; update(); };
+  document.getElementById("add").onclick = function () { if (parseInt(roundsEl.value, 10) < 12) { roundsEl.value = parseInt(roundsEl.value, 10) + 1; update(); } };
+  document.getElementById("reset").onclick = function () { roundsEl.value = 3; lrEl.value = 0.3; cache = {}; update(); };
+  update();
+})();
+</script>
+</body>
+</html>

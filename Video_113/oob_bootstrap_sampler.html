@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bootstrap Sampler — OOB Demo</title>
+<style>
+  :root{--bg:#0f172a;--panel:#1e293b;--line:#334155;--green:#22c55e;--amber:#f59e0b;--blue:#38bdf8;--txt:#e2e8f0;--dim:#94a3b8}
+  *{box-sizing:border-box;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  body{margin:0;background:var(--bg);color:var(--txt);padding:18px;max-width:920px;margin-inline:auto}
+  h1{font-size:1.35rem;margin:0 0 4px}
+  p.sub{color:var(--dim);font-size:.9rem;margin:0 0 16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  .rows{display:grid;grid-template-columns:repeat(10,1fr);gap:8px;margin:10px 0}
+  .row{display:flex;flex-direction:column;align-items:center;justify-content:center;border:1.5px dashed #475569;border-radius:10px;padding:8px 2px;min-height:62px;transition:all .25s}
+  .row .id{font-weight:700;font-size:.95rem}
+  .row .ct{font-size:.72rem;color:var(--dim);margin-top:2px}
+  .row.inbag{border-style:solid;border-color:var(--green);background:rgba(34,197,94,.12);box-shadow:0 0 8px rgba(34,197,94,.35)}
+  .row.oob{border-color:var(--amber)}
+  .btns{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+  button{background:var(--blue);color:#0f172a;border:0;border-radius:8px;padding:9px 14px;font-weight:700;cursor:pointer;font-size:.88rem}
+  button.ghost{background:#334155;color:var(--txt)}
+  button:disabled{opacity:.45;cursor:default}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
+  .stat{background:#0b1220;border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center}
+  .stat .v{font-size:1.25rem;font-weight:800}
+  .stat .k{font-size:.72rem;color:var(--dim);margin-top:2px}
+  .barwrap{background:#0b1220;border-radius:8px;height:22px;overflow:hidden;margin-top:8px;display:flex}
+  .barin{background:var(--green);height:100%;transition:width .3s}
+  .barout{background:var(--amber);height:100%;transition:width .3s}
+  .legend{display:flex;gap:14px;font-size:.8rem;color:var(--dim);margin-top:6px;flex-wrap:wrap}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px}
+  canvas#acc{width:100%;height:140px;background:#0b1220;border:1px solid var(--line);border-radius:10px}
+  .note{font-size:.82rem;color:var(--dim);line-height:1.5}
+  .theory{background:#0b1220;border-left:3px solid var(--blue);padding:8px 12px;border-radius:0 8px 8px 0;font-size:.85rem;margin-top:10px}
+  code{background:#0b1220;padding:1px 6px;border-radius:5px;color:var(--blue)}
+</style>
+</head>
+<body>
+<h1>🎲 Bootstrap Sampler — where OOB rows come from</h1>
+<p class="sub">Each tree in a Random Forest trains on a <b>bootstrap sample</b>: rows drawn <b>with replacement</b>. A drawn row goes back into the pool, so it can be drawn again — while other rows are never drawn at all. The never-drawn rows are the <b>out-of-bag (OOB)</b> samples: free, unseen validation data.</p>
+
+<div class="panel">
+  <div class="btns">
+    <button id="b1">Draw 1 row</button>
+    <button id="b20">Draw 20 (1 tree)</button>
+    <button id="b200">Draw 200 (10 trees)</button>
+    <button id="bauto" class="ghost">▶ Auto-run</button>
+    <button id="breset" class="ghost">Reset</button>
+  </div>
+  <div class="rows" id="rows"></div>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--green)"></span>In-bag (picked ≥ once)</span>
+    <span><span class="dot" style="background:var(--amber)"></span>OOB (never picked)</span>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="v" id="sDraws">0</div><div class="k">total draws</div></div>
+    <div class="stat"><div class="v" id="sUnique" style="color:var(--green)">0</div><div class="k">in-bag rows</div></div>
+    <div class="stat"><div class="v" id="sOob" style="color:var(--amber)">20</div><div class="k">OOB rows</div></div>
+    <div class="stat"><div class="v" id="sPct">100%</div><div class="k">OOB share</div></div>
+  </div>
+  <div class="barwrap"><div class="barin" id="barIn" style="width:0%"></div><div class="barout" id="barOut" style="width:100%"></div></div>
+  <div class="theory">🧮 Why ~36.8%? Each draw picks a given row with probability 1/n, so one row is missed with probability (1 − 1/n)<sup>n</sup> ≈ 1/e ≈ 0.368. Keep drawing and watch the OOB share settle near <b>36.8%</b>.</div>
+</div>
+
+<div class="panel">
+  <h3 style="margin:0 0 8px;font-size:1rem">📈 OOB accuracy as the forest grows</h3>
+  <p class="note">Simulated: each OOB row is predicted by the trees that never saw it, and a majority vote decides. Single trees are noisy; the vote stabilises quickly — which is why <code>oob_score_</code> is a decent free estimate of accuracy (treat it as a rough gauge, not exact).</p>
+  <canvas id="acc" width="860" height="140"></canvas>
+  <p class="note" id="accText">OOB accuracy (10-tree forest): —</p>
+</div>
+
+<div class="panel">
+  <p class="note" style="margin:0">💡 In scikit-learn this is one flag away: <code>RandomForestClassifier(oob_score=True)</code>, then read <code>rf.oob_score_</code>. The OOB score is computed from exactly the mechanism you just played with above — no <code>train_test_split</code> needed.</p>
+</div>
+
+<script>
+(function(){
+  var N=20, counts=new Array(N).fill(0), draws=0, trees=0, auto=null;
+  var rowsEl=document.getElementById('rows');
+  for(var i=0;i<N;i++){
+    var d=document.createElement('div');d.className='row';d.id='r'+i;
+    d.innerHTML='<div class="id">'+(i+1)+'</div><div class="ct">×0</div>';
+    rowsEl.appendChild(d);
+  }
+  // simulated OOB accuracy curve: plateaus near 0.82 as trees grow
+  var accHist=[];
+  function simulateTrees(nTrees){
+    // base per-tree correctness on unseen data
+    var p=0.74, votes=[];
+    for(var t=0;t<nTrees;t++){
+      var correct=[];
+      for(var r=0;r<N;r++){
+        if(counts[r]===0){ // OOB row: this tree did not see it
+          // simulate this tree's correctness on this row (fixed per tree/row for stability)
+          var h=Math.sin(t*127.1+r*311.7)*43758.5453; h=h-Math.floor(h);
+          correct.push(h<p?1:0);
+        }
+      }
+      votes.push(correct);
+    }
+    // majority vote over trees for OOB rows
+    var oobIdx=[]; for(var r2=0;r2<N;r2++) if(counts[r2]===0) oobIdx.push(r2);
+    if(oobIdx.length===0) return null;
+    var right=0;
+    for(var k=0;k<oobIdx.length;k++){
+      var yes=0; for(var t2=0;t2<votes.length;t2++) yes+=votes[t2][k]||0;
+      if(yes>votes.length/2) right++;
+    }
+    return right/oobIdx.length;
+  }
+  function drawOne(){
+    var idx=Math.floor(Math.random()*N);
+    counts[idx]++; draws++;
+    var el=document.getElementById('r'+idx);
+    el.className='row inbag';
+    el.querySelector('.ct').textContent='×'+counts[idx];
+    if(draws%N===0){ trees++; var a=simulateTrees(trees); if(a!==null){accHist.push(a);} }
+    update();
+  }
+  function update(){
+    var unique=0; for(var i=0;i<N;i++){ if(counts[i]>0) unique++; else document.getElementById('r'+i).className='row oob'; }
+    document.getElementById('sDraws').textContent=draws;
+    document.getElementById('sUnique').textContent=unique;
+    document.getElementById('sOob').textContent=(N-unique);
+    document.getElementById('sPct').textContent=Math.round((N-unique)/N*100)+'%';
+    document.getElementById('barIn').style.width=(unique/N*100)+'%';
+    document.getElementById('barOut').style.width=((N-unique)/N*100)+'%';
+    var at=document.getElementById('accText');
+    if(accHist.length>0){
+      var last=accHist[accHist.length-1];
+      at.textContent='OOB accuracy ('+trees+'-tree forest): '+last.toFixed(2)+' — majority vote of trees that never saw each OOB row';
+    }
+    drawChart();
+  }
+  function drawChart(){
+    var c=document.getElementById('acc'), x=c.getContext('2d');
+    x.clearRect(0,0,c.width,c.height);
+    // grid
+    x.strokeStyle='#1e293b';x.lineWidth=1;
+    [0.5,0.6,0.7,0.8,0.9,1.0].forEach(function(v){
+      var y=c.height-8-(v-0.45)/(1.05-0.45)*(c.height-20);
+      x.beginPath();x.moveTo(40,y);x.lineTo(c.width-8,y);x.stroke();
+      x.fillStyle='#64748b';x.font='10px sans-serif';x.fillText(v.toFixed(1),8,y+3);
+    });
+    if(accHist.length<1) return;
+    x.strokeStyle='#38bdf8';x.lineWidth=2;x.beginPath();
+    accHist.forEach(function(v,i){
+      var px=40+i/Math.max(1,accHist.length-1)*(c.width-48);
+      var py=c.height-8-(v-0.45)/(1.05-0.45)*(c.height-20);
+      if(i===0)x.moveTo(px,py);else x.lineTo(px,py);
+    });
+    x.stroke();
+    x.fillStyle='#94a3b8';x.font='10px sans-serif';
+    x.fillText('trees →',c.width-60,c.height-8);
+  }
+  document.getElementById('b1').onclick=function(){drawOne();};
+  document.getElementById('b20').onclick=function(){for(var i=0;i<20;i++)drawOne();};
+  document.getElementById('b200').onclick=function(){for(var i=0;i<200;i++)drawOne();};
+  document.getElementById('breset').onclick=function(){
+    counts=new Array(N).fill(0);draws=0;trees=0;accHist=[];stopAuto();
+    for(var i=0;i<N;i++){var el=document.getElementById('r'+i);el.className='row';el.querySelector('.ct').textContent='×0';}
+    document.getElementById('accText').textContent='OOB accuracy (10-tree forest): —';
+    update();
+  };
+  function stopAuto(){ if(auto){clearInterval(auto);auto=null;document.getElementById('bauto').textContent='▶ Auto-run';} }
+  document.getElementById('bauto').onclick=function(){
+    if(auto){stopAuto();return;}
+    document.getElementById('bauto').textContent='⏸ Pause';
+    auto=setInterval(function(){for(var i=0;i<10;i++)drawOne();if(draws>=600)stopAuto();},300);
+  };
+  update();
+})();
+</script>
+</body>
+</html>
