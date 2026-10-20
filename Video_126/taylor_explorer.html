@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Taylor Series Approximation Explorer — e^x and XGBoost Leaf Weights (Day 126)</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --mut:#94a3b8; --acc:#38bdf8; --grn:#4ade80; --red:#f87171; --amb:#fbbf24; --pur:#c084fc; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; padding:18px; }
+  h1 { font-size:1.35rem; margin:0 0 4px; }
+  .sub { color:var(--mut); font-size:.9rem; margin-bottom:16px; }
+  .grid { display:grid; grid-template-columns:3fr 2fr; gap:16px; }
+  @media (max-width:900px){ .grid{grid-template-columns:1fr;} }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .card h2 { font-size:1.05rem; margin:0 0 10px; color:var(--acc); }
+  canvas { width:100%; height:320px; display:block; background:#0b1220; border:1px solid var(--line); border-radius:8px; }
+  .row { display:flex; align-items:center; gap:10px; margin:10px 0; flex-wrap:wrap; }
+  input[type=range]{ flex:1; min-width:160px; accent-color:var(--acc); }
+  input[type=text]{ background:#0b1220; border:1px solid var(--line); border-radius:6px; color:var(--txt); padding:7px 10px; width:100%; font-family:ui-monospace,Menlo,monospace; }
+  label { color:var(--mut); font-size:.9rem; min-width:170px; }
+  .val { font-family:ui-monospace,Menlo,monospace; background:#0b1220; border:1px solid var(--line); border-radius:6px; padding:4px 10px; }
+  .formula { font-family:ui-monospace,Menlo,monospace; background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin:8px 0; font-size:.9rem; line-height:1.9; }
+  .k { color:var(--mut); } .v { color:var(--grn); font-weight:700; }
+  .err { color:var(--red); } .ok { color:var(--grn); }
+  .note { color:var(--mut); font-size:.82rem; margin-top:10px; line-height:1.55; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; font-size:.82rem; margin-top:8px; }
+  .sw { display:inline-block; width:22px; height:4px; border-radius:2px; vertical-align:middle; margin-right:6px; }
+  button.calc { background:#0c2a3f; color:var(--txt); border:1px solid var(--acc); border-radius:8px; padding:9px 16px; cursor:pointer; font-size:.95rem; margin-top:6px; }
+  button.calc:hover { background:#123a55; }
+</style>
+</head>
+<body>
+<h1>2nd-Order Taylor Approximation of e<sup>x</sup> — the Trick Behind XGBoost</h1>
+<div class="sub">Day 126 · CampusX · mirrors the video's Desmos example: a decision tree makes the XGBoost objective non-differentiable, so we approximate it with a 2nd-order Taylor polynomial.</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Taylor explorer: f(x) = e<sup>x</sup> around point a</h2>
+    <canvas id="plot"></canvas>
+    <div class="legend">
+      <span><span class="sw" style="background:#38bdf8"></span>f(x) = e<sup>x</sup></span>
+      <span><span class="sw" style="background:#fbbf24"></span>1st-order (tangent)</span>
+      <span><span class="sw" style="background:#4ade80"></span>2nd-order Taylor</span>
+      <span><span class="sw" style="background:rgba(248,113,113,.45)"></span>error |f &minus; T<sub>2</sub>| (shaded)</span>
+    </div>
+    <div class="row">
+      <label for="a">expansion point a</label>
+      <input type="range" id="a" min="-2" max="2" step="0.05" value="0">
+      <span class="val" id="av">0.00</span>
+    </div>
+    <div class="row">
+      <label for="w">x-range half-width (zoom)</label>
+      <input type="range" id="w" min="1" max="5" step="0.25" value="3">
+      <span class="val" id="wv">3.00</span>
+    </div>
+    <div class="formula" id="eqs"></div>
+    <div class="note">T<sub>1</sub>(x) = e<sup>a</sup> + e<sup>a</sup>(x&minus;a) and T<sub>2</sub>(x) = T<sub>1</sub>(x) + e<sup>a</sup>/2 · (x&minus;a)<sup>2</sup>. Watch how the 2nd-order curve hugs e<sup>x</sup> near a and drifts as |x&minus;a| grows — exactly how XGBoost approximates its objective near the previous stage's prediction.</div>
+  </div>
+
+  <div class="card">
+    <h2>From Taylor to XGBoost: leaf-weight calculator</h2>
+    <div class="row"><label for="gs">gradients g<sub>i</sub> (comma-sep)</label></div>
+    <input type="text" id="gs" value="-0.4, 0.6, -0.4" spellcheck="false">
+    <div class="row"><label for="hs">hessians h<sub>i</sub> (comma-sep)</label></div>
+    <input type="text" id="hs" value="0.24, 0.24, 0.24" spellcheck="false">
+    <div class="row"><label for="lam">&lambda; (regularization)</label>
+      <input type="text" id="lam" value="0" style="width:90px" spellcheck="false"></div>
+    <button class="calc" id="go">Compute w*</button>
+    <div class="formula" id="out">w* = &minus;&sum;g<sub>i</sub> / (&sum;h<sub>i</sub> + &lambda;)</div>
+    <div class="note">
+      <b>Mapping to the video:</b><br>
+      · Regression (MSE): g<sub>i</sub> = pred &minus; y, h<sub>i</sub> = 1 &rarr; w* = &sum; residuals / (n + &lambda;)<br>
+      · Classification (log loss): g<sub>i</sub> = p &minus; y, h<sub>i</sub> = p(1&minus;p) &rarr; w* = &sum; residuals / (&sum; p(1&minus;p) + &lambda;)<br>
+      The &minus;&sum;g<sub>i</sub> term is the familiar sum of residuals — the Taylor expansion is why that formula exists.
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const cv = document.getElementById("plot"), ctx = cv.getContext("2d");
+const aSl = document.getElementById("a"), wSl = document.getElementById("w");
+
+function draw() {
+  const a = parseFloat(aSl.value), W = parseFloat(wSl.value);
+  document.getElementById("av").textContent = a.toFixed(2);
+  document.getElementById("wv").textContent = W.toFixed(2);
+  const dpr = window.devicePixelRatio || 1;
+  const CW = cv.clientWidth, CH = cv.clientHeight;
+  cv.width = CW * dpr; cv.height = CH * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, CW, CH);
+  const pad = 40, x0 = pad, x1 = CW - pad, y0 = pad, y1 = CH - pad;
+  const xL = a - W, xR = a + W;
+  // y-range from sampled f
+  let yMin = 1e9, yMax = -1e9;
+  for (let i = 0; i <= 400; i++) {
+    const x = xL + 2 * W * i / 400, y = Math.exp(x);
+    if (y < yMin) yMin = y; if (y > yMax) yMax = y;
+  }
+  yMin = Math.max(0, yMin - 0.1 * (yMax - yMin)); yMax += 0.15 * (yMax - yMin);
+  const X = x => x0 + (x - xL) / (xR - xL) * (x1 - x0);
+  const Y = y => y1 - (y - yMin) / (yMax - yMin) * (y1 - y0);
+  const ea = Math.exp(a);
+  const f  = x => Math.exp(x);
+  const t1 = x => ea + ea * (x - a);
+  const t2 = x => ea + ea * (x - a) + ea / 2 * (x - a) * (x - a);
+  const N = 400, xs = [];
+  for (let i = 0; i <= N; i++) xs.push(xL + 2 * W * i / N);
+  // grid
+  ctx.strokeStyle = "#1e293b"; ctx.lineWidth = 1;
+  for (let i = 0; i <= 8; i++) { const gx = x0 + i / 8 * (x1 - x0); ctx.beginPath(); ctx.moveTo(gx, y0); ctx.lineTo(gx, y1); ctx.stroke(); }
+  for (let i = 0; i <= 6; i++) { const gy = y0 + i / 6 * (y1 - y0); ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy); ctx.stroke(); }
+  // axes labels
+  ctx.fillStyle = "#94a3b8"; ctx.font = "11px system-ui";
+  for (let i = 0; i <= 4; i++) { const xv = xL + i / 4 * 2 * W; ctx.fillText(xv.toFixed(1), X(xv) - 10, CH - 16); }
+  for (let i = 0; i <= 3; i++) { const yv = yMin + i / 3 * (yMax - yMin); ctx.fillText(yv.toFixed(1), 4, Y(yv) + 4); }
+  // error shading between f and T2
+  ctx.beginPath();
+  xs.forEach((x, i) => { const px = X(x), py = Y(f(x)); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+  for (let i = N; i >= 0; i--) ctx.lineTo(X(xs[i]), Y(t2(xs[i])));
+  ctx.closePath(); ctx.fillStyle = "rgba(248,113,113,0.22)"; ctx.fill();
+  // curves
+  const curve = (fn, color, width) => {
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath();
+    xs.forEach((x, i) => { const px = X(x), py = Y(fn(x)); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+    ctx.stroke();
+  };
+  curve(t1, "#fbbf24", 1.5); curve(t2, "#4ade80", 2); curve(f, "#38bdf8", 2.5);
+  // expansion point marker
+  ctx.strokeStyle = "#c084fc"; ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(X(a), y0); ctx.lineTo(X(a), y1); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = "#c084fc"; ctx.beginPath(); ctx.arc(X(a), Y(ea), 6, 0, 7); ctx.fill();
+  ctx.fillStyle = "#e2e8f0"; ctx.fillText("a = " + a.toFixed(2), X(a) + 8, Y(ea) - 8);
+  // error stats over the range
+  let e1 = 0, e2 = 0;
+  xs.forEach(x => { e1 = Math.max(e1, Math.abs(f(x) - t1(x))); e2 = Math.max(e2, Math.abs(f(x) - t2(x))); });
+  document.getElementById("eqs").innerHTML =
+    "T<sub>1</sub>(x) = " + ea.toFixed(3) + " + " + ea.toFixed(3) + "(x " + (a < 0 ? "+ " + Math.abs(a).toFixed(2) : "− " + a.toFixed(2)) + ")<br>" +
+    "T<sub>2</sub>(x) = T<sub>1</sub>(x) + " + (ea / 2).toFixed(3) + "(x " + (a < 0 ? "+ " + Math.abs(a).toFixed(2) : "− " + a.toFixed(2)) + ")<sup>2</sup><br>" +
+    '<span class="k">max |f − T<sub>1</sub>| on range:</span> <span class="err">' + e1.toFixed(4) + "</span> &nbsp; " +
+    '<span class="k">max |f − T<sub>2</sub>|:</span> <span class="ok">' + e2.toFixed(4) + "</span>";
+}
+aSl.addEventListener("input", draw); wSl.addEventListener("input", draw);
+window.addEventListener("resize", draw);
+draw();
+
+// ---------- leaf-weight calculator ----------
+function parseList(id) {
+  return document.getElementById(id).value.split(",").map(s => parseFloat(s.trim())).filter(v => !isNaN(v));
+}
+document.getElementById("go").onclick = () => {
+  const g = parseList("gs"), h = parseList("hs");
+  const lam = parseFloat(document.getElementById("lam").value);
+  const out = document.getElementById("out");
+  if (!g.length || g.length !== h.length || isNaN(lam) || lam < 0) {
+    out.innerHTML = '<span class="err">Enter the same number of gradients and hessians, and a non-negative &lambda;.</span>';
+    return;
+  }
+  const G = g.reduce((t, v) => t + v, 0), H = h.reduce((t, v) => t + v, 0);
+  const w = -G / (H + lam);
+  out.innerHTML =
+    "&sum;g<sub>i</sub> = " + G.toFixed(4) + " &nbsp; &sum;h<sub>i</sub> = " + H.toFixed(4) + " &nbsp; &lambda; = " + lam +
+    "<br>w* = &minus;(" + G.toFixed(4) + ") / (" + H.toFixed(4) + " + " + lam + ") = <span class=\"v\">" + w.toFixed(4) + "</span>";
+};
+</script>
+</body>
+</html>
