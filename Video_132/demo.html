@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DBSCAN — Density Explorer</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px 16px;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  h1 { font-size: 22px; color: #fff; margin: 0 0 6px; }
+  p.sub { color: #94a3b8; margin: 0 0 18px; font-size: 14px; line-height: 1.6; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: #111c33; border: 1px solid #1e3a5f; border-radius: 14px; padding: 14px;
+  }
+  .card h2 { font-size: 15px; color: #fff; margin: 0 0 10px; }
+  canvas { width: 100%; height: 300px; background: #0b1226; border-radius: 10px; display: block; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  button {
+    background: #2563eb; color: #fff; border: none; border-radius: 8px;
+    padding: 9px 16px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  }
+  button.ghost { background: #1e293b; color: #cbd5e1; border: 1px solid #475569; }
+  label { font-size: 13px; color: #cbd5e1; }
+  input[type=range] { vertical-align: middle; }
+  .stats { font-size: 13px; color: #94a3b8; margin-top: 10px; line-height: 1.7; }
+  .stats b { color: #e2e8f0; }
+  .legend { font-size: 12px; color: #64748b; margin-top: 8px; line-height: 2; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
+  .hollow { display:inline-block; width:7px; height:7px; border-radius:50%; border:2px solid #fbbf24; margin: 0 4px 0 10px; vertical-align: middle; }
+  .xmark { display:inline-block; color:#64748b; font-weight:700; margin: 0 4px 0 10px; vertical-align: middle; }
+  #kmPanel { display: none; margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>DBSCAN — Density Explorer</h1>
+  <p class="sub">Video 132 · DBSCAN (density-based clustering). No centroids, no "k" upfront — a point joins a cluster if it sits in a <b>dense</b> region. Two knobs control everything: <b>eps</b> (the neighbourhood radius) and <b>min_samples</b> (how many points must sit inside that radius). Dense regions become clusters; isolated points become <b>noise</b>.</p>
+  <div class="grid">
+    <div class="card">
+      <h2>🎯 DBSCAN on concentric rings</h2>
+      <canvas id="db" width="460" height="300"></canvas>
+      <div class="controls">
+        <label>eps = <b id="epsVal">0.7</b></label>
+        <input type="range" id="epsSlider" min="0.2" max="2" value="0.7" step="0.1">
+        <label>min_samples = <b id="msVal">4</b></label>
+        <input type="range" id="msSlider" min="2" max="10" value="4" step="1">
+      </div>
+      <div class="stats">
+        Clusters: <b id="nclust">–</b> · Noise points: <b id="nnoise">–</b><br>
+        Core: <b id="ncore">–</b> · Border: <b id="nborder">–</b><br>
+        <span id="dbscanNote">–</span>
+      </div>
+      <div class="legend">
+        <span class="dot" style="background:#38bdf8"></span>core point (filled, cluster colour)
+        <span class="hollow"></span>border point (hollow, cluster colour)
+        <span class="xmark">✕</span>noise point (grey X, labelled −1)
+      </div>
+    </div>
+    <div class="card">
+      <h2>⚔️ Why centroid-based clustering fails here</h2>
+      <p class="sub" style="margin:0 0 12px">K-Means (k = 2) must draw a straight line through the middle and split both rings in half — it can never trace a ring around another ring. DBSCAN sees density, not centres.</p>
+      <div class="controls">
+        <button id="kmBtn">Compare with K-Means (k=2)</button>
+      </div>
+      <div class="stats">
+        <span id="kmNote">Press the button to run K-Means on the same rings.</span>
+      </div>
+    </div>
+  </div>
+  <div class="card" id="kmPanel">
+    <h2>📊 K-Means (k = 2) on the same rings</h2>
+    <canvas id="km" width="920" height="300"></canvas>
+    <div class="stats" id="kmStats">–</div>
+    <div class="legend"><span class="dot" style="background:transparent;border:2px solid #fff;border-radius:0">✕</span>centroids (✕)</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ---------- deterministic concentric-rings dataset ---------- */
+function mulberry32(seed){
+  return function(){
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+var rand = mulberry32(42);
+function gauss(){
+  var u=0,v=0;
+  while(u===0)u=rand(); while(v===0)v=rand();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+}
+var DATA = [];
+var i, a, r;
+for (i=0;i<44;i++){ a=(i/44)*2*Math.PI+(rand()-0.5)*0.06; r=1.0+gauss()*0.05; DATA.push([r*Math.cos(a), r*Math.sin(a)]); }   // inner ring
+for (i=0;i<56;i++){ a=(i/56)*2*Math.PI+(rand()-0.5)*0.06; r=2.6+gauss()*0.07; DATA.push([r*Math.cos(a), r*Math.sin(a)]); }   // outer ring
+/* noise: rejection-sampled so every noise point stays far (>=1.5) from every
+   other point -> with default eps it can never form or join a cluster */
+function tooClose(p){ for (var j=0;j<DATA.length;j++) if (dist(p,DATA[j])<1.5) return true; return false; }
+var tries=0;
+while (DATA.length < 44+56+12 && tries < 20000){
+  tries++;
+  var np=[(rand()*2-1)*3.8, (rand()*2-1)*3.8];
+  if (!tooClose(np)) DATA.push(np);
+}
+var N = DATA.length;
+
+var R = 4.0; // plot range ±R
+function x2px(x,W){ return (x+R)/(2*R)*W; }
+function y2px(y,H){ return H-(y+R)/(2*R)*H; }
+function dist(p,q){ var dx=p[0]-q[0], dy=p[1]-q[1]; return Math.sqrt(dx*dx+dy*dy); }
+
+var COLORS = ["#38bdf8","#f472b6","#4ade80","#fbbf24","#c084fc","#fb923c","#22d3ee","#a3e635"];
+
+/* ---------- DBSCAN ---------- */
+function dbscan(eps, minPts){
+  var labels = new Array(N).fill(-2); // -2 unvisited, -1 noise
+  var isCore = new Array(N).fill(false);
+  function neighbors(idx){
+    var nb=[];
+    for (var j=0;j<N;j++) if (dist(DATA[idx],DATA[j])<=eps) nb.push(j);
+    return nb;
+  }
+  var cid = 0, p, i, j;
+  for (i=0;i<N;i++){
+    if (labels[i]!==-2) continue;
+    var nb = neighbors(i);
+    if (nb.length < minPts){ labels[i] = -1; continue; }
+    // core point: start/expand cluster
+    labels[i]=cid; isCore[i]=true;
+    var seeds = nb.slice();
+    while (seeds.length){
+      p = seeds.pop();
+      if (labels[p]===-1){ labels[p]=cid; }
+      if (labels[p]!==-2) continue;
+      labels[p]=cid;
+      var nb2 = neighbors(p);
+      if (nb2.length >= minPts){ isCore[p]=true; for (j=0;j<nb2.length;j++) seeds.push(nb2[j]); }
+    }
+    cid++;
+  }
+  // border vs noise: noise keeps -1; border = labelled but not core
+  var types = [], nc=0, nb2c=0, nn=0;
+  for (i=0;i<N;i++){
+    var t;
+    if (labels[i]===-1){ t="noise"; nn++; }
+    else if (isCore[i]){ t="core"; nc++; }
+    else { t="border"; nb2c++; }
+    types.push(t);
+  }
+  return { labels: labels, types: types, nClusters: cid, nCore: nc, nBorder: nb2c, nNoise: nn };
+}
+
+/* ---------- k-means (k=2, seeded, best of a few runs) ---------- */
+function kmeans(k){
+  function oneRun(seed){
+    var rr = mulberry32(seed);
+    var pool = DATA.map(function(_,idx){return idx;});
+    var C = [];
+    for (var c=0;c<k;c++){
+      var ri = Math.floor(rr()*pool.length);
+      var pt = DATA[pool.splice(ri,1)[0]];
+      C.push([pt[0], pt[1]]);
+    }
+    var L = new Array(N).fill(0), it, ci, ii, moved;
+    for (it=0; it<100; it++){
+      for (ii=0;ii<N;ii++){
+        var b=0, bd=dist(DATA[ii],C[0]);
+        for (ci=1;ci<k;ci++){ var dd=dist(DATA[ii],C[ci]); if(dd<bd){bd=dd;b=ci;} }
+        L[ii]=b;
+      }
+      moved=false;
+      for (ci=0;ci<k;ci++){
+        var sx=0,sy=0,nn2=0;
+        for (ii=0;ii<N;ii++) if(L[ii]===ci){ sx+=DATA[ii][0]; sy+=DATA[ii][1]; nn2++; }
+        var nc = nn2>0 ? [sx/nn2, sy/nn2] : C[ci].slice();
+        if (dist(nc,C[ci])>1e-10) moved=true;
+        C[ci]=nc;
+      }
+      if(!moved) break;
+    }
+    var w=0;
+    for (ii=0;ii<N;ii++) w+=dist(DATA[ii],C[L[ii]])*dist(DATA[ii],C[L[ii]]);
+    return {labels:L, centers:C, w:w};
+  }
+  var best=null;
+  for (var s=1;s<=8;s++){ var res=oneRun(s*7+1); if(!best||res.w<best.w) best=res; }
+  return best;
+}
+
+/* ---------- drawing ---------- */
+var db = document.getElementById("db"), dctx = db.getContext("2d");
+
+function drawGrid(c, W, H){
+  c.strokeStyle="#1e293b"; c.lineWidth=1;
+  for (var gx=-4; gx<=4; gx++){ c.beginPath(); c.moveTo(x2px(gx,W),0); c.lineTo(x2px(gx,W),H); c.stroke(); }
+  for (var gy=-4; gy<=4; gy++){ c.beginPath(); c.moveTo(0,y2px(gy,H)); c.lineTo(W,y2px(gy,H)); c.stroke(); }
+}
+
+function drawDBSCAN(eps, minPts){
+  var W=460,H=300;
+  var res = dbscan(eps, minPts);
+  dctx.clearRect(0,0,W,H);
+  drawGrid(dctx, W, H);
+  for (var i=0;i<N;i++){
+    var px=x2px(DATA[i][0],W), py=y2px(DATA[i][1],H);
+    var t=res.types[i];
+    if (t==="noise"){
+      dctx.strokeStyle="#64748b"; dctx.lineWidth=2;
+      dctx.beginPath();
+      dctx.moveTo(px-5,py-5); dctx.lineTo(px+5,py+5);
+      dctx.moveTo(px+5,py-5); dctx.lineTo(px-5,py+5);
+      dctx.stroke();
+    } else {
+      var col = COLORS[res.labels[i]%COLORS.length];
+      dctx.beginPath(); dctx.arc(px,py,6,0,6.2832);
+      if (t==="core"){ dctx.fillStyle=col; dctx.fill(); }
+      else { dctx.strokeStyle=col; dctx.lineWidth=2; dctx.stroke(); }
+    }
+  }
+  return res;
+}
+
+function drawKMeans(){
+  var cv = document.getElementById("km"), c = cv.getContext("2d");
+  var W=920,H=300;
+  var res = kmeans(2);
+  c.clearRect(0,0,W,H);
+  drawGrid(c, W, H);
+  for (var i=0;i<N;i++){
+    var px=x2px(DATA[i][0],W), py=y2px(DATA[i][1],H);
+    c.fillStyle = COLORS[res.labels[i]%COLORS.length];
+    c.beginPath(); c.arc(px,py,6,0,6.2832); c.fill();
+  }
+  for (var k=0;k<2;k++){
+    var cx=x2px(res.centers[k][0],W), cy=y2px(res.centers[k][1],H);
+    c.strokeStyle="#fff"; c.lineWidth=3;
+    c.beginPath();
+    c.moveTo(cx-9,cy-9); c.lineTo(cx+9,cy+9);
+    c.moveTo(cx+9,cy-9); c.lineTo(cx-9,cy+9);
+    c.stroke();
+  }
+  document.getElementById("kmStats").innerHTML =
+    "K-Means found <b>2</b> clusters by splitting the rings down the middle — " +
+    "the inner ring's points and the outer ring's points are mixed into both halves. " +
+    "Centroid-based splitting cannot discover ring-shaped (non-spherical) clusters.";
+}
+
+/* ---------- UI ---------- */
+var epsSlider = document.getElementById("epsSlider"),
+    msSlider = document.getElementById("msSlider");
+function refresh(){
+  var eps = parseFloat(epsSlider.value), ms = parseInt(msSlider.value,10);
+  document.getElementById("epsVal").textContent = eps.toFixed(1);
+  document.getElementById("msVal").textContent = ms;
+  var res = drawDBSCAN(eps, ms);
+  document.getElementById("nclust").textContent = res.nClusters;
+  document.getElementById("nnoise").textContent = res.nNoise;
+  document.getElementById("ncore").textContent = res.nCore;
+  document.getElementById("nborder").textContent = res.nBorder;
+  var note = document.getElementById("dbscanNote");
+  if (res.nClusters===2)
+    note.innerHTML = "Two rings, two clusters — density traced the shapes without anyone specifying k. Try shrinking <b>eps</b> or raising <b>min_samples</b> and watch the rings dissolve into noise.";
+  else if (res.nNoise===0)
+    note.innerHTML = "eps is so large that even the scattered noise joined clusters — density threshold too loose.";
+  else if (res.nClusters===0)
+    note.innerHTML = "eps too small or min_samples too high: no dense region survived — everything is noise.";
+  else
+    note.innerHTML = "Watch the cluster count and the noise count move as you tune the two knobs.";
+}
+epsSlider.addEventListener("input", refresh);
+msSlider.addEventListener("input", refresh);
+
+var kmVisible = false;
+document.getElementById("kmBtn").addEventListener("click", function(){
+  kmVisible = !kmVisible;
+  document.getElementById("kmPanel").style.display = kmVisible ? "block" : "none";
+  this.textContent = kmVisible ? "Hide K-Means (k=2)" : "Compare with K-Means (k=2)";
+  if (kmVisible){
+    drawKMeans();
+    document.getElementById("kmNote").innerHTML =
+      "Both rings were chopped into left/right halves by the two centroids above — K-Means needs round, centroid-shaped clusters and a known k.";
+  } else {
+    document.getElementById("kmNote").textContent = "Press the button to run K-Means on the same rings.";
+  }
+});
+refresh();
+</script>
+</body>
+</html>

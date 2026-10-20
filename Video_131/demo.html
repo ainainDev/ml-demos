@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agglomerative Clustering — Linkage &amp; Dendrogram Explorer</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px 16px;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  h1 { font-size: 22px; color: #fff; margin: 0 0 6px; }
+  p.sub { color: #94a3b8; margin: 0 0 18px; font-size: 14px; line-height: 1.6; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: #111c33; border: 1px solid #1e3a5f; border-radius: 14px; padding: 14px;
+  }
+  .card h2 { font-size: 15px; color: #fff; margin: 0 0 10px; }
+  canvas { width: 100%; height: 300px; background: #0b1226; border-radius: 10px; display: block; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  button {
+    background: #2563eb; color: #fff; border: none; border-radius: 8px;
+    padding: 9px 16px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  }
+  button.active { background: #4ade80; color: #0f172a; }
+  button.ghost { background: #1e293b; color: #cbd5e1; border: 1px solid #475569; }
+  label { font-size: 13px; color: #cbd5e1; }
+  input[type=range] { vertical-align: middle; }
+  .stats { font-size: 13px; color: #94a3b8; margin-top: 10px; line-height: 1.7; }
+  .stats b { color: #e2e8f0; }
+  .legend { font-size: 12px; color: #64748b; margin-top: 8px; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
+  .strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
+  @media (max-width: 760px) { .strip { grid-template-columns: repeat(2, 1fr); } }
+  .mini canvas { height: 190px; }
+  .mini h3 { font-size: 12.5px; color: #fff; margin: 0 0 8px; text-align: center; }
+  .stripwrap { margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Agglomerative Clustering — Linkage &amp; Dendrogram Explorer</h1>
+  <p class="sub">Day 70 · Agglomerative Hierarchical Clustering. <b>Bottom-up</b>: every point starts as its own cluster, and the two closest clusters merge, over and over, until one cluster remains. Each merge is drawn as a tree — the <b>dendrogram</b> — and <b>linkage</b> is the rule that decides how far apart two clusters are. Drag the cut line: every vertical branch it crosses becomes one cluster.</p>
+  <div class="grid">
+    <div class="card">
+      <h2>🌲 Dendrogram — drag the cut line</h2>
+      <canvas id="dendro" width="460" height="300"></canvas>
+      <div class="controls">
+        <label>Cut height = <b id="cutVal">–</b></label>
+        <input type="range" id="cutSlider" min="0" max="1000" value="550" step="1">
+      </div>
+      <div class="stats">
+        Clusters at cut: <b id="kcut">–</b><br>
+        <span id="cutNote">Cut the dendrogram where the longest vertical gaps are — the line crosses the fewest tall branches there.</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>🎨 Clusters at the cut</h2>
+      <canvas id="scatter" width="460" height="300"></canvas>
+      <div class="controls">
+        <button data-l="single" class="active">Single</button>
+        <button data-l="complete">Complete</button>
+        <button data-l="average">Average</button>
+        <button data-l="ward">Ward</button>
+      </div>
+      <div class="stats">
+        Linkage: <b id="linkName">Single</b> · <span id="linkDesc">distance = closest pair of points.</span><br>
+        <span id="clustInfo">–</span>
+      </div>
+      <div class="legend"><span class="dot" style="background:#fff"></span>fixed 10-point dataset: two tight groups + two outliers</div>
+    </div>
+  </div>
+  <div class="card stripwrap">
+    <h2>🔬 Linkage comparison — all four linkages cut at k = 2</h2>
+    <p class="sub" style="margin-bottom:10px">Same 10 points, same k — but the <b>linkage rule</b> changes which points end up together. This is why linkage choice matters.</p>
+    <div class="strip">
+      <div class="mini"><h3>Single</h3><canvas id="m_single" width="220" height="190"></canvas></div>
+      <div class="mini"><h3>Complete</h3><canvas id="m_complete" width="220" height="190"></canvas></div>
+      <div class="mini"><h3>Average</h3><canvas id="m_average" width="220" height="190"></canvas></div>
+      <div class="mini"><h3>Ward</h3><canvas id="m_ward" width="220" height="190"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ---------- fixed dataset: two tight groups + two outliers ---------- */
+var DATA = [
+  [1.0,1.0],[1.4,1.2],[1.1,1.7],[1.6,1.5],        // group A
+  [6.0,6.0],[6.4,6.2],[6.2,6.6],[6.6,6.4],        // group B
+  [3.5,3.3],                                      // bridge outlier
+  [6.4,1.2]                                       // far outlier
+];
+var MINX=0, MAXX=7.4, MINY=0, MAXY=7.4;
+var COLORS = ["#38bdf8","#f472b6","#4ade80","#fbbf24","#c084fc","#fb923c","#22d3ee","#a3e635","#fca5a5","#93c5fd"];
+var LINK_DESC = {
+  single:   "distance = closest pair of points (d = min). Chaining-prone, sensitive to noise.",
+  complete: "distance = farthest pair of points (d = max). Controls outliers, can split big clusters.",
+  average:  "distance = mean of all pairwise distances. A balance between min and max.",
+  ward:     "merge cost = increase in within-cluster variance (ΔSSE). sklearn's default."
+};
+var LINK_LABEL = { single: "Single", complete: "Complete", average: "Average", ward: "Ward" };
+
+function dist(p,q){ var dx=p[0]-q[0], dy=p[1]-q[1]; return Math.sqrt(dx*dx+dy*dy); }
+function centroid(members){
+  var sx=0, sy=0, i;
+  for (i=0;i<members.length;i++){ sx+=DATA[members[i]][0]; sy+=DATA[members[i]][1]; }
+  return [sx/members.length, sy/members.length];
+}
+function sse(members){
+  var c=centroid(members), s=0, i;
+  for (i=0;i<members.length;i++){
+    var dx=DATA[members[i]][0]-c[0], dy=DATA[members[i]][1]-c[1];
+    s+=dx*dx+dy*dy;
+  }
+  return s;
+}
+function clusterDist(a,b,type){
+  var i,j,dd,s,n;
+  if (type==="single"){ var m=Infinity;
+    for(i=0;i<a.length;i++) for(j=0;j<b.length;j++){ dd=dist(DATA[a[i]],DATA[b[j]]); if(dd<m)m=dd; } return m; }
+  if (type==="complete"){ var m2=-Infinity;
+    for(i=0;i<a.length;i++) for(j=0;j<b.length;j++){ dd=dist(DATA[a[i]],DATA[b[j]]); if(dd>m2)m2=dd; } return m2; }
+  if (type==="average"){ s=0; n=0;
+    for(i=0;i<a.length;i++) for(j=0;j<b.length;j++){ s+=dist(DATA[a[i]],DATA[b[j]]); n++; } return s/n; }
+  // ward: increase in SSE from merging
+  return sse(a.concat(b)) - sse(a) - sse(b);
+}
+
+/* Agglomerative clustering. Returns {merges:[{orderA,orderB,hA,hB,h}], maxH, finalOrder} */
+function agglomerate(type){
+  var clusters = DATA.map(function(p,i){ return { members:[i], order:[i], top:0 }; });
+  var merges = [];
+  while (clusters.length > 1){
+    var bi=-1, bj=-1, bd=Infinity, i, j;
+    for (i=0;i<clusters.length;i++) for (j=i+1;j<clusters.length;j++){
+      var dd = clusterDist(clusters[i].members, clusters[j].members, type);
+      if (dd < bd - 1e-12){ bd=dd; bi=i; bj=j; }
+    }
+    var A = clusters[bi], B = clusters[bj];
+    merges.push({ orderA:A.order.slice(), orderB:B.order.slice(), hA:A.top, hB:B.top, h:bd });
+    var merged = { members:A.members.concat(B.members), order:A.order.concat(B.order), top:bd };
+    clusters = clusters.filter(function(c,idx){ return idx!==bi && idx!==bj; });
+    clusters.push(merged);
+  }
+  var maxH = 0;
+  merges.forEach(function(m){ if(m.h>maxH) maxH=m.h; });
+  return { merges: merges, maxH: maxH, finalOrder: clusters[0].order };
+}
+
+/* labels via union-find over merges with height <= cut */
+function labelsAtCut(merges, cut){
+  var parent = DATA.map(function(_,i){ return i; });
+  function find(x){ while(parent[x]!==x){ parent[x]=parent[parent[x]]; x=parent[x]; } return x; }
+  merges.forEach(function(m){
+    if (m.h <= cut + 1e-9){
+      var ra=find(m.orderA[0]), rb=find(m.orderB[0]);
+      if (ra!==rb) parent[ra]=rb;
+    }
+  });
+  var map={}, next=0, labels=[];
+  for (var i=0;i<DATA.length;i++){ var r=find(i); if(!(r in map)) map[r]=next++; labels.push(map[r]); }
+  return labels;
+}
+
+var state = { linkage: "single", cut: 0.55, results: {} };
+["single","complete","average","ward"].forEach(function(t){ state.results[t]=agglomerate(t); });
+
+function maxH(){ return state.results[state.linkage].maxH; }
+
+/* ---------- drawing ---------- */
+function x2px(x,W){ return 14 + x/MAXX*(W-28); }
+function y2px(y,H){ return H-14 - y/MAXY*(H-28); }
+
+var dendro = document.getElementById("dendro"), dctx = dendro.getContext("2d");
+var scatter = document.getElementById("scatter"), sctx = scatter.getContext("2d");
+
+function drawDendrogram(){
+  var W=460,H=300, res=state.results[state.linkage];
+  var leafX = {}, i;
+  res.finalOrder.forEach(function(pi, k){ leafX[pi]= (k/(DATA.length-1))*(W-70)+35; });
+  function Y(h){ return H-46 - (h/(res.maxH||1))*(H-46-24); }
+  dctx.clearRect(0,0,W,H);
+  dctx.strokeStyle="#1e293b"; dctx.lineWidth=1;
+  for (var g=0; g<=4; g++){ var yy=24+g/4*(H-46-24); dctx.beginPath(); dctx.moveTo(30,yy); dctx.lineTo(W-10,yy); dctx.stroke(); }
+  dctx.strokeStyle="#94a3b8"; dctx.lineWidth=2;
+  res.merges.forEach(function(m){
+    var xa=0, xb=0;
+    m.orderA.forEach(function(pi){ xa+=leafX[pi]; }); xa/=m.orderA.length;
+    m.orderB.forEach(function(pi){ xb+=leafX[pi]; }); xb/=m.orderB.length;
+    dctx.beginPath();
+    dctx.moveTo(xa, Y(m.hA)); dctx.lineTo(xa, Y(m.h));
+    dctx.lineTo(xb, Y(m.h)); dctx.lineTo(xb, Y(m.hB));
+    dctx.stroke();
+  });
+  // leaf labels
+  dctx.fillStyle="#94a3b8"; dctx.font="10px sans-serif"; dctx.textAlign="center";
+  DATA.forEach(function(p,pi){
+    dctx.beginPath(); dctx.arc(leafX[pi], Y(0), 4, 0, 6.2832); dctx.fillStyle="#38bdf8"; dctx.fill();
+    dctx.fillStyle="#94a3b8"; dctx.fillText("P"+pi, leafX[pi], Y(0)+16);
+  });
+  // cut line
+  var cutH = state.cut*res.maxH;
+  dctx.strokeStyle="#f87171"; dctx.lineWidth=2; dctx.setLineDash([7,5]);
+  dctx.beginPath(); dctx.moveTo(30, Y(cutH)); dctx.lineTo(W-10, Y(cutH)); dctx.stroke();
+  dctx.setLineDash([]);
+  dctx.fillStyle="#f87171"; dctx.font="bold 11px sans-serif"; dctx.textAlign="left";
+  dctx.fillText("cut h=" + cutH.toFixed(2), 34, Y(cutH)-6);
+  dctx.textAlign="left";
+  // height axis label
+  dctx.fillStyle="#64748b"; dctx.font="10px sans-serif";
+  dctx.fillText("merge distance ↑", 34, 14);
+  return cutH;
+}
+
+function drawScatter(cutH){
+  var W=460,H=300;
+  var labels = labelsAtCut(state.results[state.linkage].merges, cutH);
+  sctx.clearRect(0,0,W,H);
+  sctx.strokeStyle="#1e293b"; sctx.lineWidth=1;
+  for (var gx=1; gx<=7; gx++){ sctx.beginPath(); sctx.moveTo(x2px(gx,W),0); sctx.lineTo(x2px(gx,W),H); sctx.stroke(); }
+  for (var gy=1; gy<=7; gy++){ sctx.beginPath(); sctx.moveTo(0,y2px(gy,H)); sctx.lineTo(W,y2px(gy,H)); sctx.stroke(); }
+  var k = Math.max.apply(null,labels)+1;
+  for (var i=0;i<DATA.length;i++){
+    sctx.fillStyle = COLORS[labels[i]%COLORS.length];
+    sctx.beginPath(); sctx.arc(x2px(DATA[i][0],W), y2px(DATA[i][1],H), 8, 0, 6.2832); sctx.fill();
+    sctx.strokeStyle="#fff"; sctx.lineWidth=1.5; sctx.stroke();
+    sctx.fillStyle="#0f172a"; sctx.font="bold 9px sans-serif"; sctx.textAlign="center"; sctx.textBaseline="middle";
+    sctx.fillText(""+i, x2px(DATA[i][0],W), y2px(DATA[i][1],H));
+  }
+  sctx.textAlign="left"; sctx.textBaseline="alphabetic";
+  return k;
+}
+
+/* ---------- comparison strip at k = 2 ---------- */
+function drawMinis(){
+  ["single","complete","average","ward"].forEach(function(t){
+    var cv = document.getElementById("m_"+t), c = cv.getContext("2d");
+    var W=220, H=190;
+    var merges = state.results[t].merges;
+    // cut halfway between the last two merge heights -> exactly 2 clusters
+    var cut = (merges[merges.length-1].h + merges[merges.length-2].h) / 2;
+    var labels = labelsAtCut(merges, cut);
+    c.clearRect(0,0,W,H);
+    for (var i=0;i<DATA.length;i++){
+      c.fillStyle = COLORS[labels[i]%COLORS.length];
+      c.beginPath(); c.arc(x2px(DATA[i][0],W), y2px(DATA[i][1],H), 7, 0, 6.2832); c.fill();
+    }
+  });
+}
+
+/* ---------- UI ---------- */
+var cutSlider = document.getElementById("cutSlider");
+function refresh(){
+  state.cut = cutSlider.value/1000;
+  var cutH = drawDendrogram();
+  var k = drawScatter(cutH);
+  document.getElementById("cutVal").textContent = cutH.toFixed(2);
+  document.getElementById("kcut").textContent = k;
+  document.getElementById("linkName").textContent = LINK_LABEL[state.linkage];
+  document.getElementById("linkDesc").textContent = LINK_DESC[state.linkage];
+  document.getElementById("clustInfo").innerHTML =
+    "Cut h=" + cutH.toFixed(2) + " gives <b>" + k + "</b> cluster" + (k>1?"s":"") + ".";
+  drawMinis();
+}
+cutSlider.addEventListener("input", refresh);
+var btns = document.querySelectorAll("button[data-l]");
+btns.forEach(function(b){
+  b.addEventListener("click", function(){
+    btns.forEach(function(x){ x.classList.remove("active"); });
+    b.classList.add("active");
+    state.linkage = b.getAttribute("data-l");
+    refresh();
+  });
+});
+refresh();
+</script>
+</body>
+</html>

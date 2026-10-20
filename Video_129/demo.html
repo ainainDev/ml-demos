@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Elbow Method — Interactive WCSS vs k</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px 16px;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  h1 { font-size: 22px; color: #fff; margin: 0 0 6px; }
+  p.sub { color: #94a3b8; margin: 0 0 18px; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: #111c33; border: 1px solid #1e3a5f; border-radius: 14px; padding: 14px;
+  }
+  .card h2 { font-size: 15px; color: #fff; margin: 0 0 10px; }
+  canvas { width: 100%; height: 300px; background: #0b1226; border-radius: 10px; display: block; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  button {
+    background: #2563eb; color: #fff; border: none; border-radius: 8px;
+    padding: 9px 16px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  }
+  button.ghost { background: #1e293b; color: #cbd5e1; border: 1px solid #475569; }
+  label { font-size: 13px; color: #cbd5e1; }
+  input[type=range] { vertical-align: middle; }
+  .stats { font-size: 13px; color: #94a3b8; margin-top: 10px; line-height: 1.7; }
+  .stats b { color: #e2e8f0; }
+  .legend { font-size: 12px; color: #64748b; margin-top: 8px; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
+  #interp { display: none; margin-top: 16px; }
+  #interp .row { display: grid; grid-template-columns: 24px 1fr; gap: 10px; padding: 9px 4px; border-top: 1px solid #1e293b; font-size: 13px; }
+  #interp .row:first-of-type { border-top: none; }
+  #interp .swatch { width: 16px; height: 16px; border-radius: 50%; margin-top: 2px; }
+  #interp .t { color: #fff; font-weight: 600; }
+  #interp .d { color: #94a3b8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Elbow Method — Interactive WCSS vs k</h1>
+  <p class="sub">Day 129 · K-Means in Python (practical). A fixed synthetic set of 160 students with two features, <b>CGPA</b> (x) and <b>IQ</b> (y), forms 4 visible blobs. Move the k slider — k-means runs to convergence (10 random starts, best WCSS kept) and the elbow curve shows where adding clusters stops paying off.</p>
+  <div class="grid">
+    <div class="card">
+      <h2>🔵 Clustered scatter (k = <span id="kval">4</span>)</h2>
+      <canvas id="scatter" width="440" height="300"></canvas>
+      <div class="controls">
+        <label>k = <b id="kval2">4</b></label>
+        <input type="range" id="kSlider" min="1" max="8" value="4" step="1">
+        <button id="reseedBtn" class="ghost">↻ Re-run</button>
+      </div>
+      <div class="stats">
+        WCSS (inertia): <b id="wcss">–</b> · 10 random starts, best kept<br>
+        <span id="clNote">Each colour is one cluster; the white ✕ marks its centroid (the cluster mean).</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>📉 Elbow curve — WCSS vs k</h2>
+      <canvas id="elbow" width="440" height="300"></canvas>
+      <div class="stats">
+        WCSS always falls as k grows (at k = n it would be 0). The <b style="color:#fbbf24">elbow</b> — where the sharp fall slows down — is the sweet spot between compression and fidelity.<br>
+        Detected elbow: <b id="elbowK">–</b>
+      </div>
+      <div class="legend">k-means runs on <b>standardized</b> features: IQ spans ~25 points while CGPA spans ~2, so raw Euclidean distance would be dominated by IQ alone. The scatter still shows original CGPA / IQ units.</div>
+    </div>
+  </div>
+  <div class="card" id="interp">
+    <h2>🧭 Cluster interpretation (k = 4)</h2>
+    <div id="interpRows"></div>
+    <div class="legend">Labels are read off each centroid's position: a placement-cell head would coach each group differently — the all-rounders need the least attention, the hardworking group needs motivation, the casual group needs a push, and the last group needs the most support.</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ---------- seeded PRNG so the dataset is fixed ---------- */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+var rng = mulberry32(129129);
+function gauss(){var u=0,v=0;while(u===0)u=rng();while(v===0)v=rng();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+
+/* ---------- fixed dataset: 160 students, 4 blobs (2x2 grid) ---------- */
+var CENTERS = [[6.2,103],[6.2,127],[8.6,103],[8.6,127]];  // (CGPA, IQ)
+var RAW = [];
+CENTERS.forEach(function(c){
+  for (var i=0;i<40;i++){
+    var cgpa = Math.min(10, Math.max(4, c[0] + gauss()*0.42));
+    var iq = c[1] + gauss()*5.5;
+    RAW.push([cgpa, iq]);
+  }
+});
+/* standardize: IQ's scale (~25 units) would otherwise drown CGPA (~2 units)
+   in the Euclidean distance. Clustering runs on standardized features;
+   the scatter still shows the original CGPA / IQ units. */
+var MU=[0,0], SD=[0,0];
+RAW.forEach(function(p){ MU[0]+=p[0]; MU[1]+=p[1]; });
+MU[0]/=RAW.length; MU[1]/=RAW.length;
+RAW.forEach(function(p){ SD[0]+=(p[0]-MU[0])*(p[0]-MU[0]); SD[1]+=(p[1]-MU[1])*(p[1]-MU[1]); });
+SD[0]=Math.sqrt(SD[0]/RAW.length); SD[1]=Math.sqrt(SD[1]/RAW.length);
+var DATA = RAW.map(function(p){ return [(p[0]-MU[0])/SD[0], (p[1]-MU[1])/SD[1]]; });
+function unstd(p){ return [p[0]*SD[0]+MU[0], p[1]*SD[1]+MU[1]]; }
+var COLORS = ["#f87171","#38bdf8","#4ade80","#fbbf24","#c084fc","#fb923c","#2dd4bf","#e879f9"];
+var MINX=4, MAXX=10, MINY=85, MAXY=140;
+
+/* ---------- k-means ---------- */
+function dist2(p,q){var dx=p[0]-q[0],dy=p[1]-q[1];return dx*dx+dy*dy;}
+
+function kmeansRun(kk, seed){
+  var r2 = mulberry32(seed);
+  var C = [];
+  for (var c=0;c<kk;c++) C.push(DATA[Math.floor(r2()*DATA.length)].slice());
+  var L = new Array(DATA.length).fill(0);
+  for (var it=0; it<100; it++){
+    for (var i=0;i<DATA.length;i++){
+      var best=0, bd=dist2(DATA[i],C[0]);
+      for (var j=1;j<kk;j++){var d=dist2(DATA[i],C[j]); if(d<bd){bd=d;best=j;}}
+      L[i]=best;
+    }
+    var moved=false;
+    for (var j2=0;j2<kk;j2++){
+      var sx=0,sy=0,n=0;
+      for (var i2=0;i2<DATA.length;i2++) if(L[i2]===j2){sx+=DATA[i2][0];sy+=DATA[i2][1];n++;}
+      var nc = n>0 ? [sx/n,sy/n] : DATA[Math.floor(r2()*DATA.length)].slice();
+      if (dist2(nc,C[j2])>1e-10) moved=true;
+      C[j2]=nc;
+    }
+    if (!moved) break;
+  }
+  var w=0; for (var i3=0;i3<DATA.length;i3++) w+=dist2(DATA[i3],C[L[i3]]);
+  return {C:C, L:L, w:w};
+}
+
+function bestKmeans(kk, starts, seedBase){
+  var best=null;
+  for (var s=0;s<starts;s++){
+    var r = kmeansRun(kk, seedBase + s*7919);
+    if (!best || r.w<best.w) best=r;
+  }
+  return best;
+}
+
+/* ---------- scatter ---------- */
+var cv=document.getElementById("scatter"), ctx=cv.getContext("2d");
+function x2px(x){return 16+(x-MINX)/(MAXX-MINX)*(440-32);}
+function y2px(y){return 284-(y-MINY)/(MAXY-MINY)*(300-32);}
+function drawScatter(res, kk){
+  ctx.clearRect(0,0,440,300);
+  ctx.strokeStyle="#1e293b"; ctx.lineWidth=1;
+  for (var gx=4;gx<=10;gx++){ctx.beginPath();ctx.moveTo(x2px(gx),0);ctx.lineTo(x2px(gx),300);ctx.stroke();}
+  for (var gy=100;gy<=140;gy+=10){ctx.beginPath();ctx.moveTo(0,y2px(gy));ctx.lineTo(440,y2px(gy));ctx.stroke();}
+  ctx.fillStyle="#64748b"; ctx.font="10px sans-serif";
+  ctx.fillText("CGPA →", 400, 292); ctx.fillText("IQ →", 4, 16);
+  for (var i=0;i<RAW.length;i++){
+    ctx.fillStyle=COLORS[res.L[i]%COLORS.length];
+    ctx.beginPath(); ctx.arc(x2px(RAW[i][0]), y2px(RAW[i][1]), 4, 0, 6.2832); ctx.fill();
+  }
+  for (var c=0;c<kk;c++){
+    var rc=unstd(res.C[c]);
+    var px=x2px(rc[0]), py=y2px(rc[1]);
+    ctx.strokeStyle="#fff"; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(px-8,py-8); ctx.lineTo(px+8,py+8);
+    ctx.moveTo(px+8,py-8); ctx.lineTo(px-8,py+8); ctx.stroke();
+  }
+}
+
+/* ---------- elbow ---------- */
+var WSS = [];
+for (var kk=1;kk<=8;kk++) WSS.push(bestKmeans(kk,10,5000+kk).w);
+var x1=1,y1=WSS[0],x2=8,y2=WSS[7];
+var denom=Math.hypot(x2-x1,y2-y1), bestD=-1, elbowK=2;
+for (var i=1;i<7;i++){
+  var d=Math.abs((y2-y1)*(i+1)-(x2-x1)*WSS[i]+x2*y1-y2*x1)/denom;
+  if (d>bestD){bestD=d; elbowK=i+1;}
+}
+document.getElementById("elbowK").textContent = "k = " + elbowK;
+
+var ecv=document.getElementById("elbow"), e=ecv.getContext("2d");
+(function drawElbow(curK){
+  var W=440,H=300,padL=52,padB=36,padT=16,padR=14;
+  var wmax=WSS[0], wmin=WSS[7];
+  function X(kv){return padL+(kv-1)/7*(W-padL-padR);}
+  function Y(wv){return padT+(1-(wv-wmin)/(wmax-wmin+1e-9))*(H-padT-padB);}
+  e.clearRect(0,0,W,H);
+  e.strokeStyle="#1e293b"; e.lineWidth=1;
+  for (var g=0;g<=4;g++){var yy=padT+g/4*(H-padT-padB);e.beginPath();e.moveTo(padL,yy);e.lineTo(W-padR,yy);e.stroke();}
+  e.fillStyle="#94a3b8"; e.font="11px sans-serif";
+  for (var kv=1;kv<=8;kv++) e.fillText(kv, X(kv)-3, H-padB+16);
+  e.fillText("WCSS", 6, padT+8); e.fillText("k", W-padR-6, H-8);
+  e.strokeStyle="#38bdf8"; e.lineWidth=2.5; e.beginPath();
+  WSS.forEach(function(w,j){ if(j===0)e.moveTo(X(j+1),Y(w)); else e.lineTo(X(j+1),Y(w)); });
+  e.stroke();
+  WSS.forEach(function(w,j){
+    var isE=(j+1)===elbowK, isC=(j+1)===curK;
+    e.fillStyle=isE?"#fbbf24":"#38bdf8";
+    e.beginPath(); e.arc(X(j+1),Y(w),isE?8:(isC?7:5),0,6.2832); e.fill();
+    if(isC&&!isE){e.strokeStyle="#fff";e.lineWidth=1.5;e.beginPath();e.arc(X(j+1),Y(w),10,0,6.2832);e.stroke();}
+    if(isE){e.fillStyle="#fbbf24";e.font="bold 12px sans-serif";e.fillText("elbow  k="+elbowK, X(j+1)+12, Y(w)-10);}
+  });
+})(4);
+
+/* ---------- interpretation ---------- */
+function classify(res){
+  var rc = res.C.map(unstd);
+  var medC=rc.map(function(c){return c[0];}).sort(function(a,b){return a-b;});
+  var medI=rc.map(function(c){return c[1];}).sort(function(a,b){return a-b;});
+  var mc=(medC[1]+medC[2])/2, mi=(medI[1]+medI[2])/2;
+  return rc.map(function(c,idx){
+    var hiC=c[0]>=mc, hiI=c[1]>=mi, key;
+    if (hiC&&hiI) key=["All-rounders","High CGPA + high IQ — strong in class and on reasoning tests."];
+    else if (hiC&&!hiI) key=["Hardworking","High CGPA + moderate IQ — consistent effort carries their grades."];
+    else if (!hiC&&hiI) key=["Smart but casual","High IQ + lower CGPA — the ability is there, the application is missing."];
+    else key=["Needs support","Lower CGPA + lower IQ — the group that needs the most coaching."];
+    return {idx:idx, color:COLORS[idx%COLORS.length], title:key[0], desc:key[1]};
+  });
+}
+
+/* ---------- UI ---------- */
+var k=4, current=null;
+function refresh(){
+  current = bestKmeans(k,10,9000+k);
+  drawScatter(current,k);
+  document.getElementById("kval").textContent=k;
+  document.getElementById("kval2").textContent=k;
+  document.getElementById("wcss").textContent=current.w.toFixed(0);
+  var interp=document.getElementById("interp");
+  if (k===4){
+    interp.style.display="block";
+    var rows=classify(current);
+    rows.sort(function(a,b){return a.idx-b.idx;});
+    document.getElementById("interpRows").innerHTML=rows.map(function(r){
+      return '<div class="row"><div class="swatch" style="background:'+r.color+'"></div>'+
+             '<div><div class="t">Cluster '+r.idx+' — '+r.title+'</div><div class="d">'+r.desc+'</div></div></div>';
+    }).join("");
+  } else {
+    interp.style.display="none";
+  }
+  (function(){ // redraw elbow with current-k marker
+    var W=440,H=300,padL=52,padB=36,padT=16,padR=14;
+    var wmax=WSS[0], wmin=WSS[7];
+    function X(kv){return padL+(kv-1)/7*(W-padL-padR);}
+    function Y(wv){return padT+(1-(wv-wmin)/(wmax-wmin+1e-9))*(H-padT-padB);}
+    e.clearRect(0,0,W,H);
+    e.strokeStyle="#1e293b"; e.lineWidth=1;
+    for (var g=0;g<=4;g++){var yy=padT+g/4*(H-padT-padB);e.beginPath();e.moveTo(padL,yy);e.lineTo(W-padR,yy);e.stroke();}
+    e.fillStyle="#94a3b8"; e.font="11px sans-serif";
+    for (var kv=1;kv<=8;kv++) e.fillText(kv, X(kv)-3, H-padB+16);
+    e.fillText("WCSS", 6, padT+8); e.fillText("k", W-padR-6, H-8);
+    e.strokeStyle="#38bdf8"; e.lineWidth=2.5; e.beginPath();
+    WSS.forEach(function(w,j){ if(j===0)e.moveTo(X(j+1),Y(w)); else e.lineTo(X(j+1),Y(w)); });
+    e.stroke();
+    WSS.forEach(function(w,j){
+      var isE=(j+1)===elbowK, isC=(j+1)===k;
+      e.fillStyle=isE?"#fbbf24":"#38bdf8";
+      e.beginPath(); e.arc(X(j+1),Y(w),isE?8:(isC?7:5),0,6.2832); e.fill();
+      if(isC&&!isE){e.strokeStyle="#fff";e.lineWidth=1.5;e.beginPath();e.arc(X(j+1),Y(w),10,0,6.2832);e.stroke();}
+      if(isE){e.fillStyle="#fbbf24";e.font="bold 12px sans-serif";e.fillText("elbow  k="+elbowK, X(j+1)+12, Y(w)-10);}
+    });
+  })();
+}
+document.getElementById("kSlider").addEventListener("input", function(ev){
+  k=parseInt(ev.target.value,10); refresh();
+});
+document.getElementById("reseedBtn").addEventListener("click", function(){ refresh(); });
+refresh();
+</script>
+</body>
+</html>
