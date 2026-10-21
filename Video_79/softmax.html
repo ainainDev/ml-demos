@@ -149,3 +149,154 @@
 </script>
 </body>
 </html>
+](https://itty.bitty.site/#Softmax-playground/data:text/html;charset=utf-8,<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Softmax Explorer</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #0f172a; color: #e2e8f0; line-height: 1.5;
+  }
+  h1 { font-size: 1.35rem; margin: 0 0 4px; color: #fff; }
+  .sub { color: #94a3b8; margin-bottom: 18px; font-size: .95rem; }
+  .panel {
+    background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+    padding: 16px 18px; margin-bottom: 16px; max-width: 640px;
+  }
+  .panel h2 { font-size: 1.02rem; margin: 0 0 12px; color: #93c5fd; font-weight: 600; }
+  .slider-row { display: grid; grid-template-columns: 90px 1fr 70px; gap: 10px; align-items: center; margin: 10px 0; }
+  .slider-row label { font-weight: 600; }
+  .slider-row output { text-align: right; font-variant-numeric: tabular-nums; color: #fbbf24; }
+  input[type=range] { width: 100%; accent-color: #38bdf8; }
+  .bar-wrap { display: grid; grid-template-columns: 90px 1fr 80px; gap: 10px; align-items: center; margin: 10px 0; }
+  .bar-track { height: 26px; background: #0b1220; border-radius: 6px; overflow: hidden; border: 1px solid #334155; }
+  .bar-fill { height: 100%; border-radius: 6px; transition: width .12s linear; }
+  .bar-val { font-variant-numeric: tabular-nums; color: #fbbf24; text-align: right; }
+  .sum-line { margin-top: 14px; font-size: 1.05rem; }
+  .sum-line .badge { display: inline-block; background: #065f46; color: #d1fae5; padding: 2px 12px; border-radius: 999px; font-weight: 700; }
+  .winner { color: #4ade80; font-weight: 700; }
+  .note { color: #94a3b8; font-size: .9rem; margin-top: 10px; }
+  .formula { font-family: "Courier New", monospace; color: #e2e8f0; }
+  .toggle { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; font-size: .95rem; }
+  .toggle input { accent-color: #38bdf8; width: 18px; height: 18px; }
+  .sig-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+  .sig-box { background: #0b1220; border: 1px solid #334155; border-radius: 8px; padding: 10px 12px; font-size: .92rem; }
+  .sig-box b { color: #93c5fd; }
+  .match { color: #4ade80; font-weight: 700; }
+</style>
+</head>
+<body>
+
+<h1>🔍 Softmax Explorer</h1>
+<div class="sub">Move the logit sliders and watch raw scores become probabilities that always sum to 1.</div>
+
+<div class="panel">
+  <h2>1 · Logits (raw scores) → Softmax probabilities</h2>
+  <div class="toggle">
+    <input type="checkbox" id="twoClass">
+    <label for="twoClass">Reduce to 2 classes — softmax with k = 2 equals the sigmoid</label>
+  </div>
+
+  <div id="sliders">
+    <div class="slider-row" data-class="0">
+      <label for="s0">Class 1</label><input type="range" id="s0" min="-5" max="5" step="0.1" value="1.5"><output id="o0">1.5</output>
+    </div>
+    <div class="slider-row" data-class="1">
+      <label for="s1">Class 2</label><input type="range" id="s1" min="-5" max="5" step="0.1" value="-0.5"><output id="o1">−0.5</output>
+    </div>
+    <div class="slider-row" data-class="2" id="row3">
+      <label for="s2">Class 3</label><input type="range" id="s2" min="-5" max="5" step="0.1" value="0.5"><output id="o2">0.5</output>
+    </div>
+  </div>
+
+  <div id="bars">
+    <div class="bar-wrap" data-class="0">
+      <span>P(class 1)</span><div class="bar-track"><div class="bar-fill" id="b0"></div></div><span class="bar-val" id="v0">0</span>
+    </div>
+    <div class="bar-wrap" data-class="1">
+      <span>P(class 2)</span><div class="bar-track"><div class="bar-fill" id="b1"></div></div><span class="bar-val" id="v1">0</span>
+    </div>
+    <div class="bar-wrap" data-class="2" id="bar3">
+      <span>P(class 3)</span><div class="bar-track"><div class="bar-fill" id="b2"></div></div><span class="bar-val" id="v2">0</span>
+    </div>
+  </div>
+
+  <div class="sum-line">Σ probabilities = <span class="badge" id="sum">1.000</span> &nbsp;·&nbsp; predicted: <span class="winner" id="winner">class 1</span></div>
+  <div class="note"><span class="formula">softmax(z)<sub>i</sub> = e<sup>z<sub>i</sub></sup> / Σ e<sup>z<sub>j</sub></sup></span> — the argmax prediction is the class with the longest bar.</div>
+</div>
+
+<div class="panel" id="sigPanel" style="display:none">
+  <h2>2 · With k = 2, softmax is the sigmoid</h2>
+  <div class="sig-row">
+    <div class="sig-box">softmax: P(class 1) = <b id="softP">–</b></div>
+    <div class="sig-box">sigmoid: σ(z₁ − z₂) = <b id="sigP">–</b></div>
+  </div>
+  <div class="note" id="sigNote"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var COLORS = ["#38bdf8", "#f472b6", "#4ade80"];
+  var sliders = [document.getElementById("s0"), document.getElementById("s1"), document.getElementById("s2")];
+  var outs = [document.getElementById("o0"), document.getElementById("o1"), document.getElementById("o2")];
+  var fills = [document.getElementById("b0"), document.getElementById("b1"), document.getElementById("b2")];
+  var vals = [document.getElementById("v0"), document.getElementById("v1"), document.getElementById("v2")];
+  var twoClass = document.getElementById("twoClass");
+  var row3 = document.getElementById("row3"), bar3 = document.getElementById("bar3");
+  var sigPanel = document.getElementById("sigPanel");
+
+  fills.forEach(function (f, i) { f.style.background = COLORS[i]; });
+
+  function softmax(z) {
+    var m = Math.max.apply(null, z);
+    var e = z.map(function (v) { return Math.exp(v - m); });
+    var s = e.reduce(function (a, b) { return a + b; }, 0);
+    return e.map(function (v) { return v / s; });
+  }
+
+  function update() {
+    var k = twoClass.checked ? 2 : 3;
+    var z = sliders.slice(0, k).map(function (s) { return parseFloat(s.value); });
+    sliders.slice(0, k).forEach(function (s, i) {
+      outs[i].textContent = parseFloat(s.value).toFixed(1).replace("-", "−");
+    });
+    var p = softmax(z);
+    var sum = 0, best = 0;
+    p.forEach(function (v, i) {
+      sum += v;
+      if (v > p[best]) best = i;
+      fills[i].style.width = (v * 100).toFixed(1) + "%";
+      vals[i].textContent = v.toFixed(3);
+    });
+    document.getElementById("sum").textContent = sum.toFixed(3);
+    document.getElementById("winner").textContent = "class " + (best + 1);
+
+    if (k === 2) {
+      var d = z[0] - z[1];
+      var sig = 1 / (1 + Math.exp(-d));
+      document.getElementById("softP").textContent = p[0].toFixed(6);
+      document.getElementById("sigP").textContent = sig.toFixed(6);
+      document.getElementById("sigNote").innerHTML =
+        (Math.abs(p[0] - sig) < 1e-9 ? '<span class="match">✔ identical</span> — ' : "") +
+        "with two classes, softmax P(class 1) = e<sup>z₁</sup>/(e<sup>z₁</sup>+e<sup>z₂</sup>) = 1/(1+e<sup>−(z₁−z₂)</sup>), the sigmoid of the score difference.";
+    }
+  }
+
+  sliders.forEach(function (s) { s.addEventListener("input", update); });
+  twoClass.addEventListener("change", function () {
+    var on = twoClass.checked;
+    row3.style.display = on ? "none" : "";
+    bar3.style.display = on ? "none" : "";
+    sigPanel.style.display = on ? "" : "none";
+    update();
+  });
+  update();
+})();
+</script>
+</body>
+</html>
