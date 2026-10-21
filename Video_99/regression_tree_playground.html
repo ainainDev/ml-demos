@@ -50,6 +50,286 @@
 
   <div class="controls">
     <div class="row">
+      <label for="depth">max\_depth:</label>
+      <input type="range" id="depth" min="1" max="5" step="1" value="2">
+      <span class="depth-val" id="depthVal">2</span>
+    </div>
+    <div class="row">
+      <div class="stat">leaves: <b id="stLeaves">–</b></div>
+      <div class="stat">training SSE: <b id="stSse">–</b></div>
+      <div class="stat">training RMSE: <b id="stRmse">–</b></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Scatter + the tree's piecewise-constant prediction</h3>
+    <canvas id="cv" width="640" height="340"></canvas>
+    <div class="legend">
+      <span class="dot" style="background:#38bdf8"></span>data points
+      <span class="sw" style="background:#4ade80"></span>leaf prediction (segment mean)
+      <span class="sw" style="background:#f472b6"></span>split threshold
+    </div>
+    <div class="splits" id="splitList"></div>
+  </div>
+
+  <p class="note">Dataset: 24 fixed points (x in [0,10], three clusters with seeded noise) —
+  students' hours studied vs exam marks, like the video's example. The tree is hand-coded
+  (no libraries): recursive binary splits on sorted midpoints, minimum total-SSE rule,
+  leaf value = mean. Training SSE is computed exactly from the leaf means.</p>
+</div>
+
+<script>
+"use strict";
+// ---- seeded PRNG (fixed dataset) ----
+let seed = 2026099;
+function rand(){ seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+
+// ---- fixed dataset: 24 points, x in [0,10], 3 clusters + noise ----
+const DATA = [];
+(function buildData(){
+  const clusters = [
+    { xmin: 0.5, xmax: 3.2, y: 32, sd: 4 },
+    { xmin: 3.6, xmax: 6.6, y: 61, sd: 5 },
+    { xmin: 7.0, xmax: 9.6, y: 84, sd: 4 }
+  ];
+  for (const c of clusters){
+    for (let i = 0; i < 8; i++){
+      const x = c.xmin + rand() * (c.xmax - c.xmin);
+      const y = c.y + (rand() + rand() + rand() - 1.5) * c.sd;
+      DATA.push({ x: x, y: y });
+    }
+  }
+  DATA.sort(function(a, b){ return a.x - b.x; });
+})();
+
+function mean(pts){
+  let s = 0;
+  for (const p of pts){ s += p.y; }
+  return s / pts.length;
+}
+function sseOf(pts){
+  if (pts.length === 0){ return 0; }
+  const m = mean(pts);
+  let s = 0;
+  for (const p of pts){ const d = p.y - m; s += d * d; }
+  return s;
+}
+
+// ---- best split: min total SSE over midpoints between sorted distinct x ----
+function bestSplit(pts){ // pts sorted by x
+  let best = null;
+  for (let i = 1; i < pts.length; i++){
+    if (pts[i].x === pts[i - 1].x){ continue; }
+    const thr = (pts[i - 1].x + pts[i].x) / 2;
+    const s = sseOf(pts.slice(0, i)) + sseOf(pts.slice(i));
+    if (best === null || s < best.sse){ best = { thr: thr, sse: s, idx: i }; }
+  }
+  return best;
+}
+
+// ---- recursive regression tree ----
+function buildTree(pts, depth){
+  if (depth <= 0 || pts.length < 2){
+    return { leaf: true, mean: mean(pts), n: pts.length, pts: pts };
+  }
+  const b = bestSplit(pts);
+  if (b === null){ return { leaf: true, mean: mean(pts), n: pts.length, pts: pts }; }
+  return {
+    leaf: false, thr: b.thr,
+    left:  buildTree(pts.slice(0, b.idx), depth - 1),
+    right: buildTree(pts.slice(b.idx),  depth - 1)
+  };
+}
+
+// collect leaves in left-to-right order, with their x extents
+function collectLeaves(node, out){
+  if (node.leaf){
+    const xs = node.pts.map(function(p){ return p.x; });
+    out.push({ mean: node.mean, n: node.n,
+               xmin: Math.min.apply(null, xs), xmax: Math.max.apply(null, xs) });
+  } else {
+    collectLeaves(node.left, out);
+    collectLeaves(node.right, out);
+  }
+  return out;
+}
+// collect split thresholds (with child sample counts)
+function collectSplits(node, out){
+  if (node.leaf){ return out; }
+  out.push({ thr: node.thr, leftN: countN(node.left), rightN: countN(node.right) });
+  collectSplits(node.left, out);
+  collectSplits(node.right, out);
+  return out;
+}
+function countN(node){
+  if (node.leaf){ return node.n; }
+  return countN(node.left) + countN(node.right);
+}
+
+// ---- drawing ----
+const cv = document.getElementById("cv");
+const g = cv.getContext("2d");
+const W = cv.width, H = cv.height;
+const XMIN = 0, XMAX = 10, YMIN = 10, YMAX = 105;
+function px(x){ return 44 + (x - XMIN) / (XMAX - XMIN) * (W - 60); }
+function py(y){ return H - 34 - (y - YMIN) / (YMAX - YMIN) * (H - 52); }
+
+function draw(maxDepth){
+  const tree = buildTree(DATA, maxDepth);
+  const leaves = collectLeaves(tree, []);
+  const splits = collectSplits(tree, []).sort(function(a, b){ return a.thr - b.thr; });
+
+  g.clearRect(0, 0, W, H);
+  // axes
+  g.strokeStyle = "#334155"; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(44, 10); g.lineTo(44, H - 34); g.lineTo(W - 16, H - 34); g.stroke();
+  g.fillStyle = "#94a3b8"; g.font = "11px system-ui";
+  g.fillText("hours studied →", W - 120, H - 14);
+  g.save(); g.translate(14, H / 2); g.rotate(-Math.PI / 2);
+  g.fillText("exam marks", -36, 0); g.restore();
+  for (let xv = 0; xv <= 10; xv += 2){
+    g.fillStyle = "#64748b"; g.fillText(String(xv), px(xv) - 3, H - 20);
+  }
+  for (let yv = 20; yv <= 100; yv += 20){
+    g.fillStyle = "#64748b"; g.fillText(String(yv), 16, py(yv) + 4);
+  }
+
+  // split thresholds: vertical dashed lines
+  g.setLineDash([7, 5]); g.strokeStyle = "#f472b6"; g.lineWidth = 1.5;
+  for (const s of splits){
+    g.beginPath(); g.moveTo(px(s.thr), py(YMAX)); g.lineTo(px(s.thr), py(YMIN)); g.stroke();
+    g.fillStyle = "#f472b6"; g.font = "10.5px system-ui";
+    g.fillText("x = " + s.thr.toFixed(2), px(s.thr) + 5, 22);
+  }
+  g.setLineDash([]);
+
+  // piecewise-constant prediction: horizontal mean line per leaf segment
+  g.strokeStyle = "#4ade80"; g.lineWidth = 3;
+  for (let i = 0; i < leaves.length; i++){
+    const lo = splitsSortedBoundary(leaves, splits, i);
+    const hi = splitsSortedBoundary(leaves, splits, i + 1);
+    g.beginPath(); g.moveTo(px(lo), py(leaves[i].mean)); g.lineTo(px(hi), py(leaves[i].mean)); g.stroke();
+    // segment mean marker
+    g.beginPath();
+    g.arc(px((lo + hi) / 2), py(leaves[i].mean), 6, 0, 2 * Math.PI);
+    g.fillStyle = "#4ade80"; g.fill();
+    g.strokeStyle = "#0f172a"; g.lineWidth = 2; g.stroke();
+  }
+
+  // data points
+  for (const p of DATA){
+    g.beginPath();
+    g.arc(px(p.x), py(p.y), 5, 0, 2 * Math.PI);
+    g.fillStyle = "#38bdf8"; g.fill();
+    g.strokeStyle = "#0f172a"; g.lineWidth = 1.5; g.stroke();
+  }
+
+  // stats — exact SSE from tree predictions
+  const sse = exactSse(tree);
+  const rmse = Math.sqrt(sse / DATA.length);
+  document.getElementById("stLeaves").textContent = leaves.length;
+  document.getElementById("stSse").textContent = sse.toFixed(1);
+  document.getElementById("stRmse").textContent = rmse.toFixed(2);
+
+  const el = document.getElementById("splitList");
+  if (splits.length === 0){
+    el.innerHTML = "no splits — the whole dataset is one leaf.";
+  } else {
+    let html = "split thresholds chosen by the minimum-SSE rule:<br>";
+    for (const s of splits){
+      html += '• split at <span class="st">x = ' + s.thr.toFixed(2) + "</span>" +
+              " — " + s.leftN + " points go left, " + s.rightN + " go right<br>";
+    }
+    el.innerHTML = html;
+  }
+}
+
+// leaf segment boundaries: leaf i spans [b\_i, b\_{i+1}] where boundaries are
+// XMIN, the sorted split thresholds, XMAX
+function splitsSortedBoundary(leaves, splits, i){
+  if (i === 0){ return XMIN; }
+  if (i === leaves.length){ return XMAX; }
+  return splits[i - 1].thr;
+}
+
+function predict(tree, x){
+  let node = tree;
+  while (!node.leaf){ node = (x < node.thr) ? node.left : node.right; }
+  return node.mean;
+}
+function exactSse(tree){
+  let s = 0;
+  for (const p of DATA){
+    const d = p.y - predict(tree, p.x);
+    s += d * d;
+  }
+  return s;
+}
+// ---- controls ----
+const depthInput = document.getElementById("depth");
+const depthVal = document.getElementById("depthVal");
+function refresh(){
+  const d = parseInt(depthInput.value, 10);
+  depthVal.textContent = d;
+  draw(d);
+}
+depthInput.addEventListener("input", refresh);
+refresh();
+</script>
+</body>
+</html>
+](https://itty.bitty.site/#Regression-tree-playground/data:text/html;charset=utf-8,<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Regression Tree Playground — Day 99</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8;
+          --acc:#38bdf8; --good:#4ade80; --warn:#fbbf24; --pink:#f472b6; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:1000px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .lede { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:10px 14px; font-size:13.5px; line-height:1.8; color:#cbd5e1; margin:12px 0; }
+  .lede b { color:var(--acc); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; margin-top:12px; }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  canvas { width:100%; height:340px; display:block; background:#0b1220; border-radius:8px; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:8px 0; }
+  .row label { font-size:13.5px; color:var(--dim); }
+  input[type=range] { width:220px; accent-color:var(--acc); }
+  .depth-val { font-size:15px; font-weight:700; color:var(--acc); min-width:18px; text-align:center; }
+  .stat { background:#0b1220; border:1px solid var(--line); border-radius:8px;
+          padding:8px 14px; font-size:13px; }
+  .stat b { color:var(--good); }
+  .splits { font-size:12.5px; color:var(--dim); line-height:1.9; margin-top:10px; }
+  .splits .st { color:var(--pink); font-weight:600; }
+  .note { font-size:12.5px; color:var(--dim); margin-top:10px; line-height:1.6; }
+  .legend { font-size:12px; color:var(--dim); margin-top:8px; }
+  .legend .sw { display:inline-block; width:14px; height:3px; margin:0 4px 0 12px; vertical-align:middle; }
+  .legend .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin:0 4px 0 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🌳 Regression Tree Playground
+    <span class="sub">Day 99 — every split picks the minimum total SSE; every leaf predicts its mean</span>
+  </h1>
+  <div class="lede">
+    <b>How it works:</b> the tree sorts the points by <b>x</b>, tries every midpoint between
+    consecutive points, and keeps the split with the smallest
+    <b>SSE(left) + SSE(right)</b>. Then it recurses. Each leaf predicts the
+    <b>mean</b> of the points inside it, so the prediction is a flat step line.
+    Drag the slider to see a deeper tree fit tighter — and watch SSE fall.
+  </div>
+
+  <div class="controls">
+    <div class="row">
       <label for="depth">max_depth:</label>
       <input type="range" id="depth" min="1" max="5" step="1" value="2">
       <span class="depth-val" id="depthVal">2</span>
