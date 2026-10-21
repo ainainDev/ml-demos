@@ -72,6 +72,301 @@
 <script>
 "use strict";
 
+/* ---------- fixed dataset: three visible blobs of \~40 points ---------- */
+var DATA = [
+  [2.1,2.3],[1.8,1.9],[2.4,2.0],[1.6,2.5],[2.2,1.6],[2.7,2.4],[1.9,2.1],[2.3,2.7],[1.7,1.7],[2.0,2.9],[2.6,1.9],[2.2,2.2],[1.5,2.0],[2.8,2.8],
+  [7.9,2.1],[8.3,1.8],[8.0,2.6],[7.6,2.3],[8.5,2.2],[8.1,1.6],[7.8,2.8],[8.4,2.5],[7.5,1.9],[8.2,2.0],[7.9,2.9],[8.6,1.7],[8.0,1.4],
+  [5.2,7.8],[4.8,8.2],[5.5,8.0],[5.0,7.5],[5.3,8.4],[4.6,7.9],[5.7,7.6],[5.1,8.6],[4.9,7.2],[5.4,7.4],[4.7,8.5],[5.8,8.1],[5.0,8.9]
+];
+var MINX=1, MAXX=9, MINY=1, MAXY=9.5;
+
+var COLORS = ["#38bdf8","#f472b6","#4ade80","#fbbf24","#c084fc","#fb923c"];
+
+var k = 3, centroids = [], labels = [], trails = [], iter = 0, awaiting = "assign";
+var converged = false;
+
+function x2px(x){ return 14 + (x-MINX)/(MAXX-MINX)*(440-28); }
+function y2px(y){ return 286 - (y-MINY)/(MAXY-MINY)*(300-28); }
+function dist2(p,q){ var dx=p[0]-q[0], dy=p[1]-q[1]; return dx*dx+dy*dy; }
+
+function pickCentroids(){
+  var idx = [], pool = DATA.map(function(\_,i){ return i; });
+  for (var c=0;c<k;c++){
+    var r = Math.floor(Math.random()*pool.length);
+    idx.push(pool.splice(r,1)[0]);
+  }
+  centroids = idx.map(function(i){ return [DATA[i][0], DATA[i][1]]; });
+  trails = centroids.map(function(c){ return [[c[0],c[1]]]; });
+  labels = DATA.map(function(){ return 0; });
+  iter = 0; awaiting = "assign"; converged = false;
+}
+
+function assign(){
+  var moved = false;
+  for (var i=0;i<DATA.length;i++){
+    var best=0, bd=dist2(DATA[i],centroids[0]);
+    for (var c=1;c<k;c++){ var d=dist2(DATA[i],centroids[c]); if(d<bd){bd=d;best=c;} }
+    labels[i]=best;
+  }
+  return moved;
+}
+
+function update(){
+  var movedAny = false;
+  for (var c=0;c<k;c++){
+    var sx=0, sy=0, n=0;
+    for (var i=0;i<DATA.length;i++) if (labels[i]===c){ sx+=DATA[i][0]; sy+=DATA[i][1]; n++; }
+    var nc = n>0 ? [sx/n, sy/n] : [DATA[Math.floor(Math.random()*DATA.length)][0], DATA[Math.floor(Math.random()*DATA.length)][1]];
+    if (dist2(nc, centroids[c]) > 1e-10) movedAny = true;
+    trails[c].push([nc[0], nc[1]]);
+    centroids[c] = nc;
+  }
+  iter++;
+  return movedAny;
+}
+
+function wcss(){
+  var s=0;
+  for (var i=0;i<DATA.length;i++) s += dist2(DATA[i], centroids[labels[i]]);
+  return s;
+}
+
+/* ---------- drawing ---------- */
+var cv = document.getElementById("km"), ctx = cv.getContext("2d");
+
+function draw(){
+  ctx.clearRect(0,0,440,300);
+  // grid
+  ctx.strokeStyle = "#1e293b"; ctx.lineWidth = 1;
+  for (var gx=2; gx<=9; gx++){ ctx.beginPath(); ctx.moveTo(x2px(gx),0); ctx.lineTo(x2px(gx),300); ctx.stroke(); }
+  for (var gy=2; gy<=9; gy++){ ctx.beginPath(); ctx.moveTo(0,y2px(gy)); ctx.lineTo(440,y2px(gy)); ctx.stroke(); }
+
+  // trails
+  for (var c=0;c<k;c++){
+    ctx.strokeStyle = COLORS[c%COLORS.length]; ctx.globalAlpha = 0.45; ctx.lineWidth = 2;
+    ctx.beginPath();
+    trails[c].forEach(function(p,j){ if(j===0) ctx.moveTo(x2px(p[0]),y2px(p[1])); else ctx.lineTo(x2px(p[0]),y2px(p[1])); });
+    ctx.stroke(); ctx.globalAlpha = 1;
+  }
+  // points
+  for (var i=0;i<DATA.length;i++){
+    ctx.fillStyle = COLORS[labels[i]%COLORS.length];
+    ctx.beginPath(); ctx.arc(x2px(DATA[i][0]), y2px(DATA[i][1]), 4.5, 0, 6.2832); ctx.fill();
+  }
+  // centroids as X
+  for (var c2=0;c2<k;c2++){
+    var px=x2px(centroids[c2][0]), py=y2px(centroids[c2][1]);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(px-8,py-8); ctx.lineTo(px+8,py+8);
+    ctx.moveTo(px+8,py-8); ctx.lineTo(px-8,py+8); ctx.stroke();
+    ctx.strokeStyle = COLORS[c2%COLORS.length]; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(px-8,py-8); ctx.lineTo(px+8,py+8);
+    ctx.moveTo(px+8,py-8); ctx.lineTo(px-8,py+8); ctx.stroke();
+  }
+}
+
+/* ---------- UI ---------- */
+var phaseEl = document.getElementById("phase"),
+    iterEl = document.getElementById("iter"),
+    wcssEl = document.getElementById("wcss"),
+    statusEl = document.getElementById("status"),
+    stepBtn = document.getElementById("stepBtn");
+
+function refresh(){
+  draw();
+  phaseEl.textContent = converged ? "Converged ✓" : (awaiting==="assign" ? "Assign" : "Update");
+  iterEl.textContent = iter;
+  wcssEl.textContent = wcss().toFixed(1);
+  stepBtn.textContent = converged ? "Converged — Reset to run again" : "Step: " + (awaiting==="assign"?"Assign":"Update");
+  stepBtn.disabled = converged;
+}
+
+stepBtn.addEventListener("click", function(){
+  if (converged) return;
+  if (awaiting==="assign"){
+    assign();
+    statusEl.innerHTML = "Assigned every point to its nearest centroid (Euclidean distance). Now <b>update</b>: move each centroid to its cluster's mean.";
+    awaiting = "update";
+  } else {
+    var moved = update();
+    if (!moved){
+      converged = true;
+      statusEl.innerHTML = "No centroid moved — <b>converged!</b> Try a different k or Reset for new random centroids.";
+    } else {
+      statusEl.innerHTML = "Centroids moved to their cluster means. WCSS dropped. Now <b>assign</b> again with the new centroids.";
+      awaiting = "assign";
+    }
+  }
+  refresh();
+});
+
+document.getElementById("resetBtn").addEventListener("click", function(){
+  pickCentroids();
+  statusEl.innerHTML = "New random centroids seeded from data points. Press <b>Step</b> to assign.";
+  refresh();
+});
+
+document.getElementById("kSlider").addEventListener("input", function(e){
+  k = parseInt(e.target.value,10);
+  document.getElementById("kval").textContent = k;
+  pickCentroids();
+  statusEl.innerHTML = "k changed to "+k+" — fresh random centroids. Press <b>Step</b> to assign.";
+  refresh();
+});
+
+/* ---------- elbow plot: run same k-means to convergence per k ---------- */
+function kmeansFull(kk){
+  var bestW = Infinity, bestC = null, bestL = null;
+  for (var r=0;r<20;r++){
+    var pool = DATA.map(function(\_,i){ return i; });
+    var C = [];
+    for (var c=0;c<kk;c++){ var ri=Math.floor(Math.random()*pool.length); C.push([DATA[pool.splice(ri,1)[0]][0], DATA[pool.splice(ri,1)[0]][1]]); }
+    var L = DATA.map(function(){ return 0; });
+    for (var it=0; it<100; it++){
+      var i, cc;
+      for (i=0;i<DATA.length;i++){ var b=0,bd=dist2(DATA[i],C[0]); for(cc=1;cc<kk;cc++){var d=dist2(DATA[i],C[cc]); if(d<bd){bd=d;b=cc;}} L[i]=b; }
+      var moved=false;
+      for (cc=0;cc<kk;cc++){
+        var sx=0,sy=0,n=0;
+        for (i=0;i<DATA.length;i++) if(L[i]===cc){sx+=DATA[i][0];sy+=DATA[i][1];n++;}
+        var nc = n>0 ? [sx/n,sy/n] : [C[cc][0],C[cc][1]];
+        if (dist2(nc,C[cc])>1e-10) moved=true;
+        C[cc]=nc;
+      }
+      if (!moved) break;
+    }
+    var w=0; for (var i2=0;i2<DATA.length;i2++) w += dist2(DATA[i2], C[L[i2]]);
+    if (w<bestW){ bestW=w; bestC=C; bestL=L; }
+  }
+  return { w: bestW };
+}
+
+function drawElbow(){
+  var ecv = document.getElementById("elbow"), e = ecv.getContext("2d");
+  var W=440, H=300, padL=44, padB=36, padT=16, padR=14;
+  var ws = [];
+  for (var kk=1; kk<=8; kk++) ws.push(kmeansFull(kk).w);
+  var wmax = ws[0], wmin = ws[ws.length-1];
+
+  // max-curvature elbow: farthest point from line (1,w1)-(8,w8)
+  var x1=1, y1=ws[0], x2=8, y2=ws[7];
+  var denom = Math.sqrt((x2-x1)*(x2-x1) + (y2-y1)*(y2-y1));
+  var bestD=-1, elbowK=2;
+  for (var i=1;i<7;i++){
+    var d = Math.abs((y2-y1)*(i+1) - (x2-x1)*ws[i] + x2*y1 - y2*x1)/denom;
+    if (d>bestD){ bestD=d; elbowK=i+1; }
+  }
+  document.getElementById("elbowK").textContent = "k = " + elbowK;
+
+  function X(kv){ return padL + (kv-1)/7*(W-padL-padR); }
+  function Y(wv){ return padT + (1-(wv-wmin)/(wmax-wmin+1e-9))*(H-padT-padB); }
+
+  e.clearRect(0,0,W,H);
+  e.strokeStyle="#1e293b"; e.lineWidth=1;
+  for (var g=0; g<=4; g++){ var yy = padT + g/4*(H-padT-padB); e.beginPath(); e.moveTo(padL,yy); e.lineTo(W-padR,yy); e.stroke(); }
+
+  // axes labels
+  e.fillStyle="#94a3b8"; e.font="11px sans-serif";
+  for (var kv=1; kv<=8; kv++) e.fillText(kv, X(kv)-3, H-padB+16);
+  e.fillText("WCSS", 6, padT+8);
+  e.fillText("k", W-padR-6, H-8);
+
+  // line
+  e.strokeStyle="#38bdf8"; e.lineWidth=2.5; e.beginPath();
+  ws.forEach(function(w,j){ if(j===0) e.moveTo(X(j+1),Y(w)); else e.lineTo(X(j+1),Y(w)); });
+  e.stroke();
+  // dots
+  ws.forEach(function(w,j){
+    var isElbow = (j+1)===elbowK;
+    e.fillStyle = isElbow ? "#fbbf24" : "#38bdf8";
+    e.beginPath(); e.arc(X(j+1), Y(w), isElbow?8:5, 0, 6.2832); e.fill();
+    if (isElbow){
+      e.fillStyle="#fbbf24"; e.font="bold 12px sans-serif";
+      e.fillText("elbow  k="+elbowK, X(j+1)+12, Y(w)-10);
+    }
+  });
+}
+
+pickCentroids();
+refresh();
+drawElbow();
+</script>
+</body>
+</html>
+](https://itty.bitty.site/#K-Means-Clustering-Assign-Update-Stepper-and-Elbow-Method/data:text/html;charset=utf-8,<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>K-Means Clustering — Assign/Update Stepper and Elbow Method</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px 16px;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  h1 { font-size: 22px; color: #fff; margin: 0 0 6px; }
+  p.sub { color: #94a3b8; margin: 0 0 18px; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: #111c33; border: 1px solid #1e3a5f; border-radius: 14px; padding: 14px;
+  }
+  .card h2 { font-size: 15px; color: #fff; margin: 0 0 10px; }
+  canvas { width: 100%; height: 300px; background: #0b1226; border-radius: 10px; display: block; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  button {
+    background: #2563eb; color: #fff; border: none; border-radius: 8px;
+    padding: 9px 16px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  }
+  button.ghost { background: #1e293b; color: #cbd5e1; border: 1px solid #475569; }
+  button:disabled { background: #475569; cursor: default; }
+  label { font-size: 13px; color: #cbd5e1; }
+  input[type=range] { vertical-align: middle; }
+  .stats { font-size: 13px; color: #94a3b8; margin-top: 10px; line-height: 1.7; }
+  .stats b { color: #e2e8f0; }
+  #phase { color: #fbbf24; font-weight: 700; }
+  .legend { font-size: 12px; color: #64748b; margin-top: 8px; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>K-Means Clustering — Assign/Update Stepper &amp; Elbow Method</h1>
+  <p class="sub">Day 128 · K-Means Clustering (Geometric Intuition). The algorithm is a loop: <b>assign</b> each point to the nearest centroid (Euclidean distance), then <b>update</b> each centroid to its cluster's mean — until centroids stop moving.</p>
+  <div class="grid">
+    <div class="card">
+      <h2>🌀 Assign / Update Stepper</h2>
+      <canvas id="km" width="440" height="300"></canvas>
+      <div class="controls">
+        <label>k = <b id="kval">3</b></label>
+        <input type="range" id="kSlider" min="2" max="6" value="3" step="1">
+        <button id="stepBtn">Step: Assign</button>
+        <button id="resetBtn" class="ghost">Reset</button>
+      </div>
+      <div class="stats">
+        Phase: <span id="phase">Assign</span> · Iteration: <b id="iter">0</b> · WCSS: <b id="wcss">–</b><br>
+        <span id="status">Press <b>Step</b> to assign points to their nearest centroid.</span>
+      </div>
+      <div class="legend"><span class="dot" style="background:#fff"></span>data points
+        <span class="dot" style="background:transparent;border:2px solid #fff;border-radius:0">✕</span>centroids (trails show movement)</div>
+    </div>
+    <div class="card">
+      <h2>📉 Elbow Method — WCSS vs k</h2>
+      <canvas id="elbow" width="440" height="300"></canvas>
+      <div class="stats">
+        WCSS (within-cluster sum of squares) always falls as k grows. The <b>elbow</b> — where the sharp fall slows down — is the sweet spot between compression and fidelity.
+        <br>Detected elbow: <b id="elbowK">–</b>
+      </div>
+      <div class="legend">computed by running the same k-means to convergence for k = 1…8 (20 random starts each, best WCSS kept)</div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
 /* ---------- fixed dataset: three visible blobs of ~40 points ---------- */
 var DATA = [
   [2.1,2.3],[1.8,1.9],[2.4,2.0],[1.6,2.5],[2.2,1.6],[2.7,2.4],[1.9,2.1],[2.3,2.7],[1.7,1.7],[2.0,2.9],[2.6,1.9],[2.2,2.2],[1.5,2.0],[2.8,2.8],

@@ -31,7 +31,7 @@
   .stats { font-size: 13px; color: #94a3b8; margin-top: 10px; line-height: 1.7; }
   .stats b { color: #e2e8f0; }
   .legend { font-size: 12px; color: #64748b; margin-top: 8px; line-height: 2; }
-  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
+ %[20.dot](http://20.dot) { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
   .hollow { display:inline-block; width:7px; height:7px; border-radius:50%; border:2px solid #fbbf24; margin: 0 4px 0 10px; vertical-align: middle; }
   .xmark { display:inline-block; color:#64748b; font-weight:700; margin: 0 4px 0 10px; vertical-align: middle; }
   #kmPanel { display: none; margin-top: 16px; }
@@ -40,7 +40,7 @@
 <body>
 <div class="wrap">
   <h1>DBSCAN — Density Explorer</h1>
-  <p class="sub">Video 132 · DBSCAN (density-based clustering). No centroids, no "k" upfront — a point joins a cluster if it sits in a <b>dense</b> region. Two knobs control everything: <b>eps</b> (the neighbourhood radius) and <b>min_samples</b> (how many points must sit inside that radius). Dense regions become clusters; isolated points become <b>noise</b>.</p>
+  <p class="sub">Video 132 · DBSCAN (density-based clustering). No centroids, no "k" upfront — a point joins a cluster if it sits in a <b>dense</b> region. Two knobs control everything: <b>eps</b> (the neighbourhood radius) and <b>min\_samples</b> (how many points must sit inside that radius). Dense regions become clusters; isolated points become <b>noise</b>.</p>
   <div class="grid">
     <div class="card">
       <h2>🎯 DBSCAN on concentric rings</h2>
@@ -48,7 +48,7 @@
       <div class="controls">
         <label>eps = <b id="epsVal">0.7</b></label>
         <input type="range" id="epsSlider" min="0.2" max="2" value="0.7" step="0.1">
-        <label>min_samples = <b id="msVal">4</b></label>
+        <label>min\_samples = <b id="msVal">4</b></label>
         <input type="range" id="msSlider" min="2" max="10" value="4" step="1">
       </div>
       <div class="stats">
@@ -164,7 +164,7 @@ function dbscan(eps, minPts){
 function kmeans(k){
   function oneRun(seed){
     var rr = mulberry32(seed);
-    var pool = DATA.map(function(_,idx){return idx;});
+    var pool =%[20DATA.map](http://20DATA.map)(function(\_,idx){return idx;});
     var C = [];
     for (var c=0;c<k;c++){
       var ri = Math.floor(rr()*pool.length);
@@ -269,11 +269,11 @@ function refresh(){
   document.getElementById("nborder").textContent = res.nBorder;
   var note = document.getElementById("dbscanNote");
   if (res.nClusters===2)
-    note.innerHTML = "Two rings, two clusters — density traced the shapes without anyone specifying k. Try shrinking <b>eps</b> or raising <b>min_samples</b> and watch the rings dissolve into noise.";
+    note.innerHTML = "Two rings, two clusters — density traced the shapes without anyone specifying k. Try shrinking <b>eps</b> or raising <b>min\_samples</b> and watch the rings dissolve into noise.";
   else if (res.nNoise===0)
     note.innerHTML = "eps is so large that even the scattered noise joined clusters — density threshold too loose.";
   else if (res.nClusters===0)
-    note.innerHTML = "eps too small or min_samples too high: no dense region survived — everything is noise.";
+    note.innerHTML = "eps too small or min\_samples too high: no dense region survived — everything is noise.";
   else
     note.innerHTML = "Watch the cluster count and the noise count move as you tune the two knobs.";
 }
@@ -283,7 +283,7 @@ msSlider.addEventListener("input", refresh);
 var kmVisible = false;
 document.getElementById("kmBtn").addEventListener("click", function(){
   kmVisible = !kmVisible;
-  document.getElementById("kmPanel").style.display = kmVisible ? "block" : "none";
+  document.getElementById("kmPanel"%[29.style](http://29.style).display = kmVisible ? "block" : "none";
   this.textContent = kmVisible ? "Hide K-Means (k=2)" : "Compare with K-Means (k=2)";
   if (kmVisible){
     drawKMeans();

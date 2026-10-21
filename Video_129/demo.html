@@ -31,11 +31,11 @@
   .stats { font-size: 13px; color: #94a3b8; margin-top: 10px; line-height: 1.7; }
   .stats b { color: #e2e8f0; }
   .legend { font-size: 12px; color: #64748b; margin-top: 8px; }
-  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
+ %[20.dot](http://20.dot) { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
   #interp { display: none; margin-top: 16px; }
   #interp .row { display: grid; grid-template-columns: 24px 1fr; gap: 10px; padding: 9px 4px; border-top: 1px solid #1e293b; font-size: 13px; }
   #interp .row:first-of-type { border-top: none; }
-  #interp .swatch { width: 16px; height: 16px; border-radius: 50%; margin-top: 2px; }
+  #interp%[20.swatch](http://20.swatch) { width: 16px; height: 16px; border-radius: 50%; margin-top: 2px; }
   #interp .t { color: #fff; font-weight: 600; }
   #interp .d { color: #94a3b8; }
 </style>
@@ -65,7 +65,7 @@
         WCSS always falls as k grows (at k = n it would be 0). The <b style="color:#fbbf24">elbow</b> — where the sharp fall slows down — is the sweet spot between compression and fidelity.<br>
         Detected elbow: <b id="elbowK">–</b>
       </div>
-      <div class="legend">k-means runs on <b>standardized</b> features: IQ spans ~25 points while CGPA spans ~2, so raw Euclidean distance would be dominated by IQ alone. The scatter still shows original CGPA / IQ units.</div>
+      <div class="legend">k-means runs on <b>standardized</b> features: IQ spans \~25 points while CGPA spans \~2, so raw Euclidean distance would be dominated by IQ alone. The scatter still shows original CGPA / IQ units.</div>
     </div>
   </div>
   <div class="card" id="interp">
@@ -93,7 +93,7 @@ CENTERS.forEach(function(c){
     RAW.push([cgpa, iq]);
   }
 });
-/* standardize: IQ's scale (~25 units) would otherwise drown CGPA (~2 units)
+/* standardize: IQ's scale (\~25 units) would otherwise drown CGPA (\~2 units)
    in the Euclidean distance. Clustering runs on standardized features;
    the scatter still shows the original CGPA / IQ units. */
 var MU=[0,0], SD=[0,0];
@@ -101,7 +101,7 @@ RAW.forEach(function(p){ MU[0]+=p[0]; MU[1]+=p[1]; });
 MU[0]/=RAW.length; MU[1]/=RAW.length;
 RAW.forEach(function(p){ SD[0]+=(p[0]-MU[0])*(p[0]-MU[0]); SD[1]+=(p[1]-MU[1])*(p[1]-MU[1]); });
 SD[0]=Math.sqrt(SD[0]/RAW.length); SD[1]=Math.sqrt(SD[1]/RAW.length);
-var DATA = RAW.map(function(p){ return [(p[0]-MU[0])/SD[0], (p[1]-MU[1])/SD[1]]; });
+var DATA =%[20RAW.map](http://20RAW.map)(function(p){ return [(p[0]-MU[0])/SD[0], (p[1]-MU[1])/SD[1]]; });
 function unstd(p){ return [p[0]*SD[0]+MU[0], p[1]*SD[1]+MU[1]]; }
 var COLORS = ["#f87171","#38bdf8","#4ade80","#fbbf24","#c084fc","#fb923c","#2dd4bf","#e879f9"];
 var MINX=4, MAXX=10, MINY=85, MAXY=140;
@@ -204,11 +204,11 @@ var ecv=document.getElementById("elbow"), e=ecv.getContext("2d");
 
 /* ---------- interpretation ---------- */
 function classify(res){
-  var rc = res.C.map(unstd);
-  var medC=rc.map(function(c){return c[0];}).sort(function(a,b){return a-b;});
-  var medI=rc.map(function(c){return c[1];}).sort(function(a,b){return a-b;});
+  var rc =%[20res.C.map](http://20res.C.map)(unstd);
+  var medC%[3Drc.map](http://3Drc.map)(function(c){return c[0];}).sort(function(a,b){return a-b;});
+  var medI%[3Drc.map](http://3Drc.map)(function(c){return c[1];}).sort(function(a,b){return a-b;});
   var mc=(medC[1]+medC[2])/2, mi=(medI[1]+medI[2])/2;
-  return rc.map(function(c,idx){
+  return%[20rc.map](http://20rc.map)(function(c,idx){
     var hiC=c[0]>=mc, hiI=c[1]>=mi, key;
     if (hiC&&hiI) key=["All-rounders","High CGPA + high IQ — strong in class and on reasoning tests."];
     else if (hiC&&!hiI) key=["Hardworking","High CGPA + moderate IQ — consistent effort carries their grades."];
@@ -228,15 +228,15 @@ function refresh(){
   document.getElementById("wcss").textContent=current.w.toFixed(0);
   var interp=document.getElementById("interp");
   if (k===4){
-    interp.style.display="block";
+   %[20interp.style](http://20interp.style).display="block";
     var rows=classify(current);
     rows.sort(function(a,b){return a.idx-b.idx;});
-    document.getElementById("interpRows").innerHTML=rows.map(function(r){
+    document.getElementById("interpRows").innerHTML%[3Drows.map](http://3Drows.map)(function(r){
       return '<div class="row"><div class="swatch" style="background:'+r.color+'"></div>'+
              '<div><div class="t">Cluster '+r.idx+' — '+r.title+'</div><div class="d">'+r.desc+'</div></div></div>';
     }).join("");
   } else {
-    interp.style.display="none";
+   %[20interp.style](http://20interp.style).display="none";
   }
   (function(){ // redraw elbow with current-k marker
     var W=440,H=300,padL=52,padB=36,padT=16,padR=14;
@@ -262,7 +262,7 @@ function refresh(){
   })();
 }
 document.getElementById("kSlider").addEventListener("input", function(ev){
-  k=parseInt(ev.target.value,10); refresh();
+  k=parseInt%[28ev.target](http://28ev.target).value,10); refresh();
 });
 document.getElementById("reseedBtn").addEventListener("click", function(){ refresh(); });
 refresh();
