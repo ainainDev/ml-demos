@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naive Bayes — Play Tennis Example — Day 89</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8; --acc:#38bdf8; --good:#4ade80; --bad:#f43f5e; --warn:#fbbf24; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .math { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:13.5px; line-height:1.9; color:#cbd5e1; margin:12px 0; }
+  .math b { color:var(--acc); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  canvas { width:100%; height:auto; display:block; background:#0b1220; border-radius:8px; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin:8px 0; }
+  label { font-size:13px; color:var(--dim); display:flex; align-items:center; gap:8px; }
+  select { background:#0b1220; border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:8px 10px; font-size:13px; }
+  .stats { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+  .stat { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:8px 14px; font-size:13px; }
+  .stat b { color:var(--acc); }
+  .stat.winner b { color:var(--warn); font-size:16px; }
+  .liketbl { border-collapse:collapse; margin:10px auto; font-size:13px; }
+  .liketbl th, .liketbl td { border:1px solid var(--line); padding:6px 12px; text-align:center; }
+  .liketbl th { color:var(--dim); background:#0b1220; }
+  .liketbl td b { color:var(--acc); }
+  .note { font-size:12.5px; color:var(--dim); margin-top:10px; line-height:1.6; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
+  @media (max-width:640px){ .grid2 { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎾 Naive Bayes — Play Tennis Example
+    <span class="sub">Day 89 — Naive Bayes, Part 8 · pick today's weather and let the classifier decide</span>
+  </h1>
+
+  <div class="math">
+    <b>P(play | outlook, temp, humidity, wind)</b> ∝ P(play) · P(outlook|play) · P(temp|play) · P(humidity|play) · P(wind|play)<br>
+    Counts come from the classic 14-day toy dataset below, with <b>Laplace smoothing (α = 1)</b> so unseen combos never hit zero.
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>Normalized posteriors</h3>
+      <canvas id="bars" width="420" height="280"></canvas>
+    </div>
+    <div class="card">
+      <h3>Per-feature likelihoods for your day</h3>
+      <div id="likDiv" style="overflow-x:auto"></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <label>Outlook <select id="outlook"></select></label>
+      <label>Temperature <select id="temp"></select></label>
+      <label>Humidity <select id="hum"></select></label>
+      <label>Wind <select id="wind"></select></label>
+    </div>
+    <div class="stats">
+      <div class="stat">P(yes | X) <b id="stYes">–</b></div>
+      <div class="stat">P(no | X) <b id="stNo">–</b></div>
+      <div class="stat winner">Verdict <b id="stVerdict">–</b></div>
+    </div>
+    <p class="note">The 14-day dataset is tiny, so Laplace smoothing (add-one) keeps rare combos — like "overcast" on a no-day — from collapsing to a zero probability and vetoing everything. The same algorithm runs in Python via <b>sklearn.naive_bayes.CategoricalNB(alpha=1.0)</b> — the study page shows the equivalent code. Note how "outlook = overcast" alone pushes P(yes) hard: every overcast day in the data was played.</p>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---- classic 14-row play-tennis dataset ----
+// [outlook, temp, humidity, wind, play]
+const DATA = [
+  ["sunny",    "hot",  "high",   "weak",   "no"],
+  ["sunny",    "hot",  "high",   "strong", "no"],
+  ["overcast", "hot",  "high",   "weak",   "yes"],
+  ["rainy",    "mild", "high",   "weak",   "yes"],
+  ["rainy",    "cool", "normal", "weak",   "yes"],
+  ["rainy",    "cool", "normal", "strong", "no"],
+  ["overcast", "cool", "normal", "strong", "yes"],
+  ["sunny",    "mild", "high",   "weak",   "no"],
+  ["sunny",    "cool", "normal", "weak",   "yes"],
+  ["rainy",    "mild", "normal", "weak",   "yes"],
+  ["sunny",    "mild", "normal", "strong", "yes"],
+  ["overcast", "mild", "high",   "strong", "yes"],
+  ["overcast", "hot",  "normal", "weak",   "yes"],
+  ["rainy",    "mild", "high",   "strong", "no"]
+];
+const FEATURES = ["outlook", "temp", "hum", "wind"];
+const VALUES = {
+  outlook: ["sunny", "overcast", "rainy"],
+  temp: ["hot", "mild", "cool"],
+  hum: ["high", "normal"],
+  wind: ["weak", "strong"]
+};
+const ALPHA = 1;
+
+// ---- pure math: top-level ----
+function nbPredict(x, alpha) {
+  const classes = ["yes", "no"];
+  const scores = {};
+  const detail = {};
+  classes.forEach(c => {
+    const rows = DATA.filter(r => r[4] === c);
+    let logS = Math.log(rows.length / DATA.length);
+    detail[c] = { prior: rows.length / DATA.length, feats: [] };
+    FEATURES.forEach((f, i) => {
+      const cnt = rows.filter(r => r[i] === x[f]).length;
+      const p = (cnt + alpha) / (rows.length + alpha * VALUES[f].length);
+      logS += Math.log(p);
+      detail[c].feats.push({ name: f, value: x[f], p: p, count: cnt });
+    });
+    scores[c] = logS;
+  });
+  // normalize via log-sum-exp
+  const m = Math.max(scores.yes, scores.no);
+  const ey = Math.exp(scores.yes - m), en = Math.exp(scores.no - m);
+  return { py: ey / (ey + en), pn: en / (ey + en), detail: detail };
+}
+
+function fillSelects() {
+  FEATURES.forEach(f => {
+    const sel = document.getElementById(f);
+    VALUES[f].forEach(v => {
+      const o = document.createElement("option");
+      o.value = v; o.textContent = v;
+      sel.appendChild(o);
+    });
+  });
+  document.getElementById("outlook").value = "sunny";
+  document.getElementById("temp").value = "cool";
+  document.getElementById("hum").value = "high";
+  document.getElementById("wind").value = "strong";
+}
+function currentX() {
+  return { outlook: document.getElementById("outlook").value,
+           temp: document.getElementById("temp").value,
+           hum: document.getElementById("hum").value,
+           wind: document.getElementById("wind").value };
+}
+
+const cvs = document.getElementById("bars");
+const ctx = cvs.getContext("2d");
+
+function drawBars(py, pn) {
+  const W = cvs.width, H = cvs.height;
+  ctx.clearRect(0, 0, W, H);
+  const data = [["play = yes", py, "#4ade80"], ["play = no", pn, "#f43f5e"]];
+  const x0 = 130, x1 = W - 60, rh = 44, y0 = 60;
+  ctx.font = "13px system-ui";
+  data.forEach((d, i) => {
+    const y = y0 + i * (rh + 30);
+    ctx.fillStyle = "#94a3b8"; ctx.textAlign = "right";
+    ctx.fillText(d[0], x0 - 12, y + 28);
+    const w = Math.max(d[1] * (x1 - x0), 4);
+    const hot = (i === 0) === (py >= pn);
+    ctx.fillStyle = d[2]; ctx.globalAlpha = hot ? 1 : 0.45;
+    ctx.fillRect(x0, y, w, rh);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "#e2e8f0"; ctx.textAlign = "left";
+    ctx.font = "bold 14px system-ui";
+    ctx.fillText((d[1] * 100).toFixed(1) + "%", x0 + w + 10, y + 28);
+    ctx.font = "13px system-ui";
+  });
+  ctx.fillStyle = "#64748b"; ctx.textAlign = "center";
+  ctx.fillText("posteriors sum to 100%", W / 2, 26);
+}
+
+function drawLikTable(r) {
+  let h = "<table class='liketbl'><tr><th>feature</th><th>value</th><th>P(v | yes)</th><th>P(v | no)</th></tr>";
+  for (let i = 0; i < FEATURES.length; i++) {
+    const fy = r.detail.yes.feats[i], fn = r.detail.no.feats[i];
+    h += "<tr><td>" + fy.name + "</td><td><b>" + fy.value + "</b></td><td>" + fy.p.toFixed(3) + "</td><td>" + fn.p.toFixed(3) + "</td></tr>";
+  }
+  h += "<tr><td>prior</td><td>—</td><td>" + r.detail.yes.prior.toFixed(3) + "</td><td>" + r.detail.no.prior.toFixed(3) + "</td></tr></table>";
+  document.getElementById("likDiv").innerHTML = h;
+}
+
+function update() {
+  const r = nbPredict(currentX(), ALPHA);
+  document.getElementById("stYes").textContent = (r.py * 100).toFixed(1) + "%";
+  document.getElementById("stNo").textContent = (r.pn * 100).toFixed(1) + "%";
+  document.getElementById("stVerdict").textContent = r.py >= r.pn ? "PLAY 🎾" : "DON'T PLAY";
+  drawBars(r.py, r.pn);
+  drawLikTable(r);
+}
+fillSelects();
+FEATURES.forEach(f => document.getElementById(f).addEventListener("change", update));
+update();
+</script>
+</body>
+</html>
