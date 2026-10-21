@@ -43,6 +43,7 @@
     <button class="ghost preset" data-lr="0.6" data-s="too large — overshoots">🐇 Too big (0.60)</button>
     <button class="ghost preset" data-lr="1.1" data-s="way too large — diverges!">💥 Explodes (1.10)</button>
   </div>
+  <div class="verdict" id="status" style="display:none"></div>
   <div class="verdict" id="verdict">Step: <b id="step">0</b> &nbsp;·&nbsp; b = <b id="bv">—</b> &nbsp;·&nbsp; L = <b id="lv">—</b> &nbsp;·&nbsp; slope dL/db = <b id="gv">—</b></div>
 </div>
 
@@ -71,10 +72,16 @@ const W = walk.width, H = walk.height;
 function scaleX(bb) { return 40 + (bb + 9) / 18 * (W - 80); }
 function scaleY(l) { return H - 30 - Math.min(l, 120) / 120 * (H - 60); }
 
+function setStatus(html) {
+  const s = document.getElementById('status');
+  if (html) { s.innerHTML = html; s.style.display = 'block'; }
+  else { s.innerHTML = ''; s.style.display = 'none'; }
+}
 function reset() {
   stop();
   b = parseFloat(document.getElementById('start').value);
   path = [b]; costs = [L(b)]; done = false;
+  setStatus(null);
   document.getElementById('step').textContent = '0';
   draw();
 }
@@ -133,10 +140,10 @@ function step() {
   document.getElementById('step').textContent = parseInt(document.getElementById('step').textContent) + 1;
   if (Math.abs(b - bold) < 0.001) {
     stop(); done = true;
-    document.getElementById('verdict').innerHTML = `✅ <b>Converged!</b> b settled at <b>${b.toFixed(4)}</b> (target 3) — the video's stopping rule |Δb| &lt; 0.001 fired. Step: <b>${document.getElementById('step').textContent}</b> · b = <b>${b.toFixed(4)}</b> · L = <b>${L(b).toExponential(2)}</b> · slope = <b>${dL(b).toFixed(3)}</b>`;
+    setStatus(`✅ <b>Converged!</b> b settled at <b>${b.toFixed(4)}</b> (target 3) — the video's stopping rule |Δb| &lt; 0.001 fired after <b>${document.getElementById('step').textContent}</b> steps. Press ▶ to run it again, or ↺ Reset to go back to the start.`);
   } else if (!isFinite(b) || Math.abs(b) > 1e6) {
     stop(); done = true;
-    document.getElementById('verdict').innerHTML = `💥 <b>Diverged!</b> The learning rate was so large the ball flew out of the bowl. Smaller lr, bro. Step: <b>${document.getElementById('step').textContent}</b>`;
+    setStatus(`💥 <b>Diverged!</b> The learning rate was so large the ball flew out of the bowl. Try a smaller lr — press ↺ Reset, then ▶ Play.`);
   }
   draw();
 }
@@ -150,7 +157,7 @@ document.querySelectorAll('.preset').forEach(btn => btn.onclick = () => {
   document.getElementById('lr').value = btn.dataset.lr;
   document.getElementById('lrv').textContent = parseFloat(btn.dataset.lr).toFixed(2);
   reset();
-  document.getElementById('verdict').innerHTML = `Preset: <b>${btn.dataset.s}</b> — press ▶ and watch. Starting b = ${document.getElementById('start').value}, lr = ${btn.dataset.lr}.`;
+  setStatus(`Preset: <b>${btn.dataset.s}</b> — press ▶ and watch. Starting b = ${document.getElementById('start').value}, lr = ${btn.dataset.lr}.`);
   draw();
 });
 reset();
