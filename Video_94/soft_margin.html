@@ -111,6 +111,293 @@ function hingeLoss(w, b, pts, C) {
   return C * s / pts.length;
 }
 
+// Subgradient descent on  1/2||w||^2 + C * mean\_i max(0, 1 - y\_i(w.x\_i + b))
+// Features are standardized first; w,b are converted back to raw coordinates.
+function trainSoftMargin(pts, C) {
+  const n = pts.length;
+  let mx = 0, my = 0;
+  for (const p of pts) { mx += p.x[0]; my += p.x[1]; }
+  mx /= n; my /= n;
+  let sx = 0, sy = 0;
+  for (const p of pts) { sx += (p.x[0]-mx)*(p.x[0]-mx); sy += (p.x[1]-my)*(p.x[1]-my); }
+  sx = Math.sqrt(sx/n) || 1; sy = Math.sqrt(sy/n) || 1;
+
+  let w1 = 0, w2 = 0, b = 0;
+  const eta = 0.05, ITERS = 2000;
+  for (let t = 0; t < ITERS; t++) {
+    let gw1 = w1, gw2 = w2, gb = 0;   // gradient of 1/2||w||^2 part
+    for (const p of pts) {
+      const zx = (p.x[0]-mx)/sx, zy = (p.x[1]-my)/sy;
+      const z = p.y * (w1*zx + w2*zy + b);
+      if (z < 1) {                     // violator: nonzero hinge subgradient
+        gw1 -= C * p.y * zx / n;
+        gw2 -= C * p.y * zy / n;
+        gb  -= C * p.y / n;
+      }
+    }
+    w1 -= eta * gw1; w2 -= eta * gw2; b -= eta * gb;
+  }
+  // back to raw coordinates: w1*(x-mx)/sx + w2*(y-my)/sy + b
+  return {
+    w1: w1/sx,
+    w2: w2/sy,
+    b:  b - w1*mx/sx - w2*my/sy
+  };
+}
+
+// ---- view state ----
+const dataC = document.getElementById("dataCanvas");
+const lossC = document.getElementById("lossCanvas");
+const dctx = dataC.getContext("2d"), lctx = lossC.getContext("2d");
+const XMIN = -3.6, XMAX = 3.6, YMIN = -2.6, YMAX = 2.6;
+let C = 1, outX = -2.8;
+
+function currentPts() {
+  const pts = PTS.map(p => ({ x:p.x.slice(), y:p.y, outlier:false }));
+  pts.push({ x:[outX, OUTLIER.x[1]], y:OUTLIER.y, outlier:true });
+  return pts;
+}
+function pxx(x) { return (x - XMIN) / (XMAX - XMIN) * dataC.width; }
+function pyy(y) { return dataC.height - (y - YMIN) / (YMAX - YMIN) * dataC.height; }
+
+function fline(w1, w2, b, level) {
+  // returns two endpoints of w1*x + w2*y + b = level inside the view box
+  const pts = [];
+  if (Math.abs(w2) > 1e-9) {
+    const yA = (level - w1*XMIN - b)/w2, yB = (level - w1*XMAX - b)/w2;
+    if (yA > YMIN && yA < YMAX) pts.push([pxx(XMIN), pyy(yA)]);
+    if (yB > YMIN && yB < YMAX) pts.push([pxx(XMAX), pyy(yB)]);
+  }
+  if (Math.abs(w1) > 1e-9) {
+    const xA = (level - w2*YMIN - b)/w1, xB = (level - w2*YMAX - b)/w1;
+    if (xA > XMIN && xA < XMAX) pts.push([pxx(xA), pyy(YMIN)]);
+    if (xB > XMIN && xB < XMAX) pts.push([pxx(xB), pyy(YMAX)]);
+  }
+  return pts.length >= 2 ? [pts[0], pts[pts.length-1]] : null;
+}
+
+function drawData(model, pts) {
+  const { w1, w2, b } = model;
+  dctx.clearRect(0, 0, dataC.width, dataC.height);
+  // grid
+  dctx.strokeStyle = "#1e293b"; dctx.lineWidth = 1;
+  for (let g = -3; g <= 3; g++) {
+    dctx.beginPath(); dctx.moveTo(pxx(g), 0); dctx.lineTo(pxx(g), dataC.height); dctx.stroke();
+    dctx.beginPath(); dctx.moveTo(0, pyy(g)); dctx.lineTo(dataC.width, pyy(g)); dctx.stroke();
+  }
+  // gutters (w.x+b = +/-1), drawn first under the boundary
+  for (const lv of [1, -1]) {
+    const seg = fline(w1, w2, b, lv);
+    if (seg) {
+      dctx.strokeStyle = "rgba(148,163,184,0.55)"; dctx.lineWidth = 1.5;
+      dctx.setLineDash([6, 5]);
+      dctx.beginPath(); dctx.moveTo(seg[0][0], seg[0][1]); dctx.lineTo(seg[1][0], seg[1][1]); dctx.stroke();
+      dctx.setLineDash([]);
+    }
+  }
+  // decision boundary
+  const seg = fline(w1, w2, b, 0);
+  if (seg) {
+    dctx.strokeStyle = "#38bdf8"; dctx.lineWidth = 3;
+    dctx.beginPath(); dctx.moveTo(seg[0][0], seg[0][1]); dctx.lineTo(seg[1][0], seg[1][1]); dctx.stroke();
+  }
+  // points
+  for (const p of pts) {
+    const X = pxx(p.x[0]), Y = pyy(p.x[1]);
+    dctx.beginPath(); dctx.arc(X, Y, p.outlier ? 7 : 4, 0, 2*Math.PI);
+    dctx.fillStyle = p.y === 1 ? "#a78bfa" : "#4ade80";
+    dctx.fill();
+    if (p.outlier) {
+      dctx.strokeStyle = "#fbbf24"; dctx.lineWidth = 2.5; dctx.stroke();
+    } else {
+      dctx.strokeStyle = "#0f172a"; dctx.lineWidth = 1; dctx.stroke();
+    }
+  }
+}
+
+function drawHinge(model, pts) {
+  const { w1, w2, b } = model;
+  lctx.clearRect(0, 0, lossC.width, lossC.height);
+  const W = lossC.width, H = lossC.height, padL = 38, padB = 30, padT = 14, padR = 12;
+  const ZMIN = -2, ZMAX = 3, LMAX = 3;
+  const X = z => padL + (z - ZMIN)/(ZMAX - ZMIN) * (W - padL - padR);
+  const Y = l => (H - padB) - l/LMAX * (H - padB - padT);
+  // axes
+  lctx.strokeStyle = "#334155"; lctx.lineWidth = 1;
+  lctx.beginPath(); lctx.moveTo(padL, padT); lctx.lineTo(padL, H - padB); lctx.lineTo(W - padR, H - padB); lctx.stroke();
+  lctx.fillStyle = "#94a3b8"; lctx.font = "11px system-ui";
+  lctx.fillText("z = y·f(x)", W - padR - 62, H - 10);
+  lctx.fillText("hinge", 6, padT + 8);
+  for (const zt of [-2, -1, 0, 1, 2, 3]) lctx.fillText(String(zt), X(zt) - 3, H - padB + 14);
+  // hinge curve
+  lctx.strokeStyle = "#38bdf8"; lctx.lineWidth = 2.5; lctx.beginPath();
+  lctx.moveTo(X(ZMIN), Y(Math.max(0, 1 - ZMIN)));
+  lctx.lineTo(X(1), Y(0)); lctx.lineTo(X(ZMAX), Y(0)); lctx.stroke();
+  // z = 1 kink marker
+  lctx.strokeStyle = "rgba(251,191,36,0.5)"; lctx.setLineDash([4, 4]);
+  lctx.beginPath(); lctx.moveTo(X(1), padT); lctx.lineTo(X(1), H - padB); lctx.stroke(); lctx.setLineDash([]);
+  // each point's (z, hinge(z)) as a dot
+  for (const p of pts) {
+    const z = p.y * (w1*p.x[0] + w2*p.x[1] + b);
+    const l = Math.max(0, 1 - z);
+    const cx = X(Math.max(ZMIN, Math.min(ZMAX, z))), cy = Y(Math.min(LMAX, l));
+    lctx.beginPath(); lctx.arc(cx, cy, p.outlier ? 5.5 : 3.5, 0, 2*Math.PI);
+    lctx.fillStyle = p.outlier ? "#fbbf24" : (p.y === 1 ? "#a78bfa" : "#4ade80");
+    lctx.fill();
+  }
+}
+
+function update() {
+  const pts = currentPts();
+  const model = trainSoftMargin(pts, C);
+  const { w1, w2, b } = model;
+  drawData(model, pts);
+  drawHinge(model, pts);
+  const norm = Math.hypot(w1, w2);
+  let viol = 0, misc = 0, hinge = 0;
+  for (const p of pts) {
+    const z = p.y * (w1*p.x[0] + w2*p.x[1] + b);
+    const l = Math.max(0, 1 - z);
+    hinge += l;
+    if (l > 0) viol++;
+    if (z < 0) misc++;
+  }
+  document.getElementById("stMargin").textContent = norm > 1e-9 ? (2/norm).toFixed(2) : "∞";
+  document.getElementById("stViol").textContent = viol;
+  document.getElementById("stMisc").textContent = misc;
+  document.getElementById("stHinge").textContent = hinge.toFixed(2);
+}
+
+document.getElementById("cSlider").addEventListener("input", function () {
+  C = Math.pow(10, -2 + 4 * (this.value / 100));   // 0.01 .. 100, log scale
+  document.getElementById("cOut").textContent = C >= 10 ? C.toFixed(0) : (C >= 1 ? C.toFixed(2) : C.toFixed(3));
+  update();
+});
+document.getElementById("outSlider").addEventListener("input", function () {
+  outX = 1.6 + (this.value / 100) * (-2.8 - 1.6);  // +1.6 (own region) -> -2.8 (deep inside other class)
+  document.getElementById("outOut").textContent = outX.toFixed(2);
+  update();
+});
+
+// initial slider state: C = 1, outlier deep in the other class's region
+document.getElementById("outSlider").value = 100;
+update();
+</script>
+</body>
+</html>
+](https://itty.bitty.site/#Soft-Margin-SVM-Lab/data:text/html;charset=utf-8,<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soft-Margin SVM: Slack, C &amp; the Hinge Loss — Day 94</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8;
+          --acc:#38bdf8; --good:#4ade80; --bad:#f43f5e; --warn:#fbbf24; --vio:#a78bfa; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:1160px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .math { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:10px 14px; font-size:13.5px; line-height:1.9; color:#cbd5e1; margin:12px 0; }
+  .math b { color:var(--acc); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:12px; }
+  @media (max-width:860px){ .grid{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  canvas { width:100%; height:340px; display:block; background:#0b1220; border-radius:8px; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+              padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin:8px 0; }
+  label { font-size:13px; color:var(--dim); display:flex; align-items:center; gap:8px; }
+  label output { color:var(--acc); font-weight:700; min-width:70px; }
+  input[type=range] { width:200px; accent-color:var(--acc); }
+  .stats { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+  .stat { background:#0b1220; border:1px solid var(--line); border-radius:8px;
+          padding:8px 14px; font-size:13px; }
+  .stat b { color:var(--acc); }
+  .note { font-size:12.5px; color:var(--dim); margin-top:10px; line-height:1.6; }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12.5px; color:var(--dim); margin-top:8px; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; vertical-align:baseline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🤖 Soft-Margin SVM: Slack, C &amp; the Hinge Loss
+    <span class="sub">Day 94 — drag the outlier across the boundary, then turn the C dial and watch the boundary react</span>
+  </h1>
+  <div class="math">
+    <b>Objective:</b> min ½‖w‖² + C·Σᵢ max(0, 1 − yᵢ(w·xᵢ + b)) &nbsp;·&nbsp;
+    <b>Subgradient step:</b> w ← w − η·(w − C·Σ<sub>violators</sub> yᵢxᵢ),&nbsp; b ← b − η·(−C·Σ<sub>violators</sub> yᵢ),
+    η fixed, 2000 iterations &nbsp;·&nbsp;
+    Features are standardized before training; the boundary is drawn in the original coordinates.
+  </div>
+
+  <div class="grid">
+    <div class="card"><h3>Data, boundary and gutters (outlier ringed)</h3><canvas id="dataCanvas" width="520" height="340"></canvas></div>
+    <div class="card"><h3>Hinge loss vs signed margin z = y·f(x) — dots are the points</h3><canvas id="lossCanvas" width="520" height="340"></canvas></div>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <label>C (log scale) <input type="range" id="cSlider" min="0" max="100" value="50"><output id="cOut">1</output></label>
+      <label>Outlier x-position <input type="range" id="outSlider" min="0" max="100" value="100"><output id="outOut">-2.80</output></label>
+    </div>
+    <div class="stats">
+      <div class="stat">Margin width 2/‖w‖ <b id="stMargin">–</b></div>
+      <div class="stat">Margin violations (ξᵢ&gt;0) <b id="stViol">–</b></div>
+      <div class="stat">Misclassified <b id="stMisc">–</b></div>
+      <div class="stat">Total hinge loss <b id="stHinge">–</b></div>
+    </div>
+    <div class="legend">
+      <span><span class="dot" style="background:#4ade80"></span>class −1</span>
+      <span><span class="dot" style="background:#a78bfa"></span>class +1</span>
+      <span><span class="dot" style="background:transparent;border:2px solid #fbbf24"></span>the movable outlier</span>
+    </div>
+    <p class="note">At small C the boundary is wide and calm — the outlier sits inside the margin and barely dents it.
+    Push the outlier deep into the other class's region, then raise C: the boundary tilts and narrows to satisfy the expensive
+    violation, like a hard margin. Drag the outlier back to its own side and the drama disappears.</p>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---- deterministic pseudo-random generator (fixed seed) ----
+let seed = 2026094;
+function rand() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+function randn() {
+  let u = 0, v = 0;
+  while (u === 0) u = rand();
+  while (v === 0) v = rand();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+// ---- fixed dataset: two mostly-separable blobs ----
+const PTS = [];
+(function buildBlobs() {
+  const defs = [ { cx:-1.8, cy: 0.5, y:-1, n:20 }, { cx: 1.8, cy:-0.5, y: 1, n:20 } ];
+  for (const d of defs) {
+    for (let i = 0; i < d.n; i++) {
+      PTS.push({ x:[ d.cx + randn()*0.55, d.cy + randn()*0.55 ], y:d.y, outlier:false });
+    }
+  }
+})();
+// the movable outlier: a +1 point whose x we drag from its own class region
+// (x = +1.6) deep into the other class's region (x = -2.8)
+const OUTLIER = { x:[1.6, -0.4], y: 1, outlier:true };
+
+// ---- pure training machinery (top-level functions) ----
+function hingeLoss(w, b, pts, C) {
+  let s = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const z = pts[i].y * (w[0]*pts[i].x[0] + w[1]*pts[i].x[1] + b);
+    if (z < 1) s += 1 - z;
+  }
+  return C * s / pts.length;
+}
+
 // Subgradient descent on  1/2||w||^2 + C * mean_i max(0, 1 - y_i(w.x_i + b))
 // Features are standardized first; w,b are converted back to raw coordinates.
 function trainSoftMargin(pts, C) {

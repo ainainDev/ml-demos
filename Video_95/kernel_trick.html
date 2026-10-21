@@ -127,6 +127,266 @@ const g2 = c2.getContext("2d");
 const W = c1.width, H = c1.height;
 
 function xToPx(x){ return (x + 3.4) / 6.8 * W; }
+function zToPy(z){ return H - 40 - z * (H - 90); }      // z in [0, \~1.1] -> pixels
+function yToPy2(y){ return H - 40 - (y + 3.4) / 6.8 * (H - 80); } // flat 2D y -> pixels
+
+function drawBell(ctx, t){
+  // faint bell curve f(x)=e^(-x^2), fades in while lifting
+  ctx.save();
+  ctx.globalAlpha = 0.35 * t;
+  ctx.strokeStyle = "#38bdf8"; ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let i = 0; i <= 120; i++){
+    const x = -3.4 + 6.8 * i / 120;
+    const px = xToPx(x), py = zToPy(lift1d(x));
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPanel1(t){
+  g1.clearRect(0, 0, W, H);
+  const basePy = H - 40;
+  // baseline
+  g1.strokeStyle = "#334155"; g1.lineWidth = 1;
+  g1.beginPath(); g1.moveTo(10, basePy); g1.lineTo(W - 10, basePy); g1.stroke();
+  g1.fillStyle = "#94a3b8"; g1.font = "11px system-ui";
+  g1.fillText("x", W - 18, basePy + 16);
+  drawBell(g1, t);
+  // separating line at z=0.55, fades in with the lift
+  if (t > 0.75){
+    const a = (t - 0.75) / 0.25;
+    g1.save();
+    g1.globalAlpha = a;
+    g1.strokeStyle = "#4ade80"; g1.lineWidth = 2; g1.setLineDash([7, 5]);
+    g1.beginPath(); g1.moveTo(10, zToPy(THRESH1D)); g1.lineTo(W - 10, zToPy(THRESH1D)); g1.stroke();
+    g1.setLineDash([]);
+    g1.fillStyle = "#4ade80"; g1.font = "12px system-ui";
+    g1.fillText("separating line z = 0.55", 14, zToPy(THRESH1D) - 8);
+    g1.restore();
+  }
+  // points rise from the baseline to their lifted height
+  const pts = [];
+  O1.forEach(function(x){ pts.push({ x: x, cls: 0 }); });
+  X1.forEach(function(x){ pts.push({ x: x, cls: 1 }); });
+  for (const p of pts){
+    const liftY = zToPy(lift1d(p.x));
+    const py = basePy + (liftY - basePy) * t;
+    g1.beginPath();
+    g1.arc(xToPx(p.x), py, 6, 0, 2 * Math.PI);
+    g1.fillStyle = p.cls === 1 ? "#38bdf8" : "#fbbf24";
+    g1.fill();
+    g1.strokeStyle = "#0f172a"; g1.lineWidth = 1.5; g1.stroke();
+  }
+  g1.fillStyle = "#94a3b8"; g1.font = "11px system-ui";
+  g1.fillText(t < 0.5 ? "flat 1D line — no single cut separates X from O"
+                      : "lifted view — X floats above the line, O stays below", 14, 20);
+}
+
+function drawPanel2(t){
+  g2.clearRect(0, 0, W, H);
+  const innerLifted = t > 0.75;
+  if (innerLifted){
+    // side projection: x horizontal, z vertical; flat separating plane as a line
+    const a = (t - 0.75) / 0.25;
+    g2.save();
+    g2.globalAlpha = a;
+    g2.strokeStyle = "#4ade80"; g2.lineWidth = 2; g2.setLineDash([7, 5]);
+    g2.beginPath(); g2.moveTo(10, zToPy(THRESH2D)); g2.lineTo(W - 10, zToPy(THRESH2D)); g2.stroke();
+    g2.setLineDash([]);
+    g2.fillStyle = "#4ade80"; g2.font = "12px system-ui";
+    g2.fillText("separating plane (side view)", 14, zToPy(THRESH2D) - 8);
+    g2.restore();
+    g2.fillStyle = "#94a3b8"; g2.font = "11px system-ui";
+    g2.fillText("side view: x vs z = e^(−(x²+y²)) — inner ring rises", 14, 20);
+    g2.fillText("z", W - 18, H - 46);
+  } else {
+    g2.fillStyle = "#94a3b8"; g2.font = "11px system-ui";
+    g2.fillText("concentric circles — no straight line separates inner from outer", 14, 20);
+  }
+  for (const p of P2){
+    const flatY = yToPy2(p.y);
+    const liftY = zToPy(lift2d(p.x, p.y));
+    const py = flatY + (liftY - flatY) * t;
+    g2.beginPath();
+    g2.arc(xToPx(p.x), py, 4, 0, 2 * Math.PI);
+    g2.fillStyle = p.cls === 1 ? "#38bdf8" : "#fbbf24";
+    g2.fill();
+    g2.strokeStyle = "#0f172a"; g2.lineWidth = 1; g2.stroke();
+  }
+}
+
+// ---- animation: toggle each panel between flat (t=0) and lifted (t=1) ----
+const anim = { t1: 0, t2: 0, target1: 0, target2: 0, raf: null };
+function frame(){
+  const step = 0.03;
+  let moving = false;
+  for (const k of ["1", "2"]){
+    const t = anim["t" + k], tgt = anim["target" + k];
+    if (Math.abs(t - tgt) > 0.001){
+      anim["t" + k] = t + Math.sign(tgt - t) * Math.min(step, Math.abs(tgt - t));
+      moving = true;
+    }
+  }
+  drawPanel1(anim.t1);
+  drawPanel2(anim.t2);
+  if (moving){ anim.raf = requestAnimationFrame(frame); }
+  else { anim.raf = null; }
+}
+function kick(){ if (anim.raf === null){ anim.raf = requestAnimationFrame(frame); } }
+
+const b1 = document.getElementById("lift1Btn");
+const b2 = document.getElementById("lift2Btn");
+b1.addEventListener("click", function(){
+  anim.target1 = anim.target1 === 1 ? 0 : 1;
+  this.textContent = anim.target1 === 1 ? "⬇ Back to the 1D line" : "⬆ Lift with f(x)=e^(−x²)";
+  document.getElementById("st1").textContent =
+    anim.target1 === 1 ? (separableAfterLift1d() ? "✓ yes — X above, O below z=0.55" : "✗ no") : "not lifted yet";
+  kick();
+});
+b2.addEventListener("click", function(){
+  anim.target2 = anim.target2 === 1 ? 0 : 1;
+  this.textContent = anim.target2 === 1 ? "⬇ Back to flat 2D" : "⬆ Lift to 3D view";
+  document.getElementById("st2").textContent =
+    anim.target2 === 1 ? (separableAfterLift2d() ? "✓ yes — inner ring above the plane" : "✗ no") : "not lifted yet";
+  kick();
+});
+
+drawPanel1(0);
+drawPanel2(0);
+</script>
+</body>
+</html>
+](https://itty.bitty.site/#Kernel-Trick-Intuition/data:text/html;charset=utf-8,<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Kernel Trick: Geometric Intuition — Day 95</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8;
+          --acc:#38bdf8; --good:#4ade80; --warn:#fbbf24; --xcls:#38bdf8; --ocls:#fbbf24; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .lede { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:10px 14px; font-size:13.5px; line-height:1.8; color:#cbd5e1; margin:12px 0; }
+  .lede b { color:var(--acc); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:12px; }
+  @media (max-width:820px){ .grid{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  canvas { width:100%; height:300px; display:block; background:#0b1220; border-radius:8px; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+              padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:8px 0; }
+  button { background:#0369a1; color:#fff; border:0; border-radius:8px;
+           padding:9px 18px; font-size:14px; cursor:pointer; }
+  button:hover { background:#0284c7; }
+  .stat { background:#0b1220; border:1px solid var(--line); border-radius:8px;
+          padding:8px 14px; font-size:13px; }
+  .stat b { color:var(--good); }
+  .note { font-size:12.5px; color:var(--dim); margin-top:10px; line-height:1.6; }
+  .legend { font-size:12px; color:var(--dim); margin-top:8px; }
+  .legend .sw { display:inline-block; width:10px; height:10px; border-radius:50%; margin:0 4px 0 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🤖 The Kernel Trick: Geometric Intuition
+    <span class="sub">Day 95 — when no line can separate the classes, lift the data until one can</span>
+  </h1>
+  <div class="lede">
+    <b>Idea:</b> an SVM draws a straight dividing line. Below, class <b>X</b> (blue) sits in the middle
+    with class <b>O</b> (amber) on both sides — no single cut works. Apply the bell mapping
+    <b>f(x) = e<sup>−x²</sup></b> and every point gains a second coordinate; the middle class rides up
+    onto the bell while the side class stays on the tails, and one horizontal line separates them.
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Panel 1 — the 1D trap, lifted</h3>
+      <canvas id="c1" width="480" height="300"></canvas>
+      <div class="legend"><span class="sw" style="background:#38bdf8"></span>class X (middle)
+        <span class="sw" style="background:#fbbf24"></span>class O (sides)</div>
+    </div>
+    <div class="card">
+      <h3>Panel 2 — concentric circles, lifted to 3D</h3>
+      <canvas id="c2" width="480" height="300"></canvas>
+      <div class="legend"><span class="sw" style="background:#38bdf8"></span>class X (inner circle)
+        <span class="sw" style="background:#fbbf24"></span>class O (outer ring)</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <button id="lift1Btn">⬆ Lift with f(x)=e^(−x²)</button>
+      <button id="lift2Btn">⬆ Lift to 3D view</button>
+    </div>
+    <div class="row">
+      <div class="stat">1D separation after lift: <b id="st1">not lifted yet</b></div>
+      <div class="stat">2D separation after lift: <b id="st2">not lifted yet</b></div>
+    </div>
+    <p class="note">Panel 2's "3D view" is a side projection: the vertical axis becomes
+      z = e<sup>−(x²+y²)</sup>. Inner-circle points (small x²+y²) rise high; the outer ring
+      (large x²+y²) stays near the floor — so a flat plane slices between them.</p>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---- deterministic pseudo-random generator (fixed seed) ----
+let seed = 2026095;
+function rand(){ seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+
+// ---- pure math: the kernel-style lifting maps ----
+function lift1d(x){ return Math.exp(-x * x); }          // f(x) = e^(-x^2)
+function lift2d(x, y){ return Math.exp(-(x * x + y * y)); } // z = e^(-(x^2+y^2))
+
+// ---- fixed 1D data: O on both sides, X in the middle (seeded jitter) ----
+const THRESH1D = 0.55;
+const O1 = [-2.5, -2.0, -1.5, 1.5, 2.0, 2.5].map(function(x){ return x + (rand() - 0.5) * 0.3; });
+const X1 = [-0.5, 0.0, 0.5].map(function(x){ return x + (rand() - 0.5) * 0.3; });
+
+// ---- pure check: after lifting, all X sit above the line and all O below it ----
+function separableAfterLift1d(){
+  for (const x of X1){ if (lift1d(x) <= THRESH1D) return false; }
+  for (const x of O1){ if (lift1d(x) >= THRESH1D) return false; }
+  return true;
+}
+
+// ---- 2D concentric circles (seeded): inner = X, outer ring = O ----
+const THRESH2D = 0.08;
+const P2 = [];
+(function buildCircles(){
+  for (let i = 0; i < 120; i++){
+    const inner = i < 60;
+    const ang = rand() * 2 * Math.PI;
+    const r = inner ? 1.0 + (rand() - 0.5) * 0.5 : 2.6 + (rand() - 0.5) * 0.6;
+    P2.push({ x: r * Math.cos(ang), y: r * Math.sin(ang), cls: inner ? 1 : 0 });
+  }
+})();
+function separableAfterLift2d(){
+  for (const p of P2){
+    const z = lift2d(p.x, p.y);
+    if (p.cls === 1 && z <= THRESH2D) return false;
+    if (p.cls === 0 && z >= THRESH2D) return false;
+  }
+  return true;
+}
+
+// ---- drawing setup ----
+const c1 = document.getElementById("c1");
+const c2 = document.getElementById("c2");
+const g1 = c1.getContext("2d");
+const g2 = c2.getContext("2d");
+const W = c1.width, H = c1.height;
+
+function xToPx(x){ return (x + 3.4) / 6.8 * W; }
 function zToPy(z){ return H - 40 - z * (H - 90); }      // z in [0, ~1.1] -> pixels
 function yToPy2(y){ return H - 40 - (y + 3.4) / 6.8 * (H - 80); } // flat 2D y -> pixels
 
