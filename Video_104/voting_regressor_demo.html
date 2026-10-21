@@ -146,6 +146,419 @@ for (let i = 0; i < NPTS; i++){
   YS.push(trueFn(x) + randn() * 1.2);
 }
 // sorted copies (handy for the tree's split search)
+const order = XS.map(function(\_, i){ return i; }).sort(function(a, b){ return XS[a] - XS[b]; });
+const SX = order.map(function(i){ return XS[i]; });
+const SY = order.map(function(i){ return YS[i]; });
+
+// ---- base model (a): closed-form linear regression ----
+function fitLinear(xs, ys){
+  const n = xs.length;
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let i = 0; i < n; i++){
+    sx += xs[i]; sy += ys[i]; sxx += xs[i] * xs[i]; sxy += xs[i] * ys[i];
+  }
+  const slope = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+  const icept = (sy - slope * sx) / n;
+  return function(x){ return slope * x + icept; };
+}
+
+// ---- base model (b): k-NN regressor ----
+function makeKnn(xs, ys, k){
+  const kk = Math.max(1, Math.min(k, xs.length));
+  return function(x){
+    const idx = xs.map(function(\_, i){ return i; })
+      .sort(function(a, b){ return Math.abs(xs[a] - x) - Math.abs(xs[b] - x); });
+    let s = 0;
+    for (let j = 0; j < kk; j++) s += ys[idx[j]];
+    return s / kk;
+  };
+}
+
+// ---- base model (c): depth-limited regression tree, SSE splits ----
+function fitTree(xs, ys, maxDepth){
+  function meanOf(idxs){
+    let s = 0;
+    for (const i of idxs) s += ys[i];
+    return s / idxs.length;
+  }
+  function build(idxs, depth){
+    if (depth >= maxDepth || idxs.length <= 3) return { leaf: true, value: meanOf(idxs) };
+    const sorted = idxs.slice().sort(function(a, b){ return xs[a] - xs[b]; });
+    let tot = 0, totSq = 0;
+    for (const i of sorted){ tot += ys[i]; totSq += ys[i] * ys[i]; }
+    let bestSSE = Infinity, bestPos = -1, lsum = 0, lsumSq = 0;
+    for (let p = 1; p < sorted.length; p++){
+      const prev = sorted[p - 1];
+      lsum += ys[prev]; lsumSq += ys[prev] * ys[prev];
+      if (xs[sorted[p]] === xs[prev]) continue;      // no split between identical x
+      const ln = p, rn = sorted.length - p;
+      const rsum = tot - lsum, rsumSq = totSq - lsumSq;
+      const sse = (lsumSq - lsum * lsum / ln) + (rsumSq - rsum * rsum / rn);
+      if (sse < bestSSE){ bestSSE = sse; bestPos = p; }
+    }
+    if (bestPos < 0) return { leaf: true, value: meanOf(idxs) };
+    const thr = (xs[sorted[bestPos - 1]] + xs[sorted[bestPos]]) / 2;
+    return {
+      leaf: false, thr: thr,
+      left: build(sorted.slice(0, bestPos), depth + 1),
+      right: build(sorted.slice(bestPos), depth + 1)
+    };
+  }
+  const root = build(xs.map(function(\_, i){ return i; }), 0);
+  return function(x){
+    let node = root;
+    while (!node.leaf) node = (x <= node.thr) ? node.left : node.right;
+    return node.value;
+  };
+}
+
+// ---- state ----
+const state = { k: 5, depth: 3, probe: 6.3,
+                include: { lin: true, knn: true, tree: true } };
+const GRID = 200;
+const GX = [];
+for (let i = 0; i < GRID; i++) GX.push(10 * i / (GRID - 1));
+
+const COLORS = { lin: "#38bdf8", knn: "#fbbf24", tree: "#f472b6", ens: "#4ade80" };
+const NAMES  = { lin: "Linear regression", knn: "k-NN regressor", tree: "Regression tree" };
+
+function rmseOnGrid(predict){
+  let s = 0;
+  for (let i = 0; i < GRID; i++){
+    const e = predict(GX[i]) - trueFn(GX[i]);
+    s += e * e;
+  }
+  return Math.sqrt(s / GRID);
+}
+
+function buildModels(){
+  const lin = fitLinear(XS, YS);
+  const knn = makeKnn(XS, YS, state.k);
+  const tree = fitTree(SX, SY, state.depth);
+  return { lin: lin, knn: knn, tree: tree };
+}
+
+function includedKeys(){
+  return ["lin", "knn", "tree"].filter(function(k){ return state.include[k]; });
+}
+
+function ensemblePredict(models){
+  const keys = includedKeys();
+  if (keys.length === 0) return null;
+  return function(x){
+    let s = 0;
+    for (const k of keys) s += models[k](x);
+    return s / keys.length;
+  };
+}
+
+// ---- drawing ----
+const canvas = document.getElementById("plot");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+const PADL = 46, PADR = 14, PADT = 14, PADB = 34;
+
+function draw(models, curves, ensCurve){
+  // y-range from data + curves
+  let lo = Infinity, hi = -Infinity;
+  function feed(v){ if (v < lo) lo = v; if (v > hi) hi = v; }
+  YS.forEach(feed);
+  Object.keys(curves).forEach(function(k){ curves[k].forEach(feed); });
+  if (ensCurve) ensCurve.forEach(feed);
+  const span = (hi - lo) || 1;
+  lo -= span * 0.06; hi += span * 0.06;
+  const X = function(x){ return PADL + (x / 10) * (W - PADL - PADR); };
+  const Y = function(y){ return H - PADB - ((y - lo) / (hi - lo)) * (H - PADT - PADB); };
+
+  ctx.clearRect(0, 0, W, H);
+  // axes
+  ctx.strokeStyle = "#334155"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PADL, PADT - 6); ctx.lineTo(PADL, H - PADB);
+  ctx.lineTo(W - PADR + 6, H - PADB); ctx.stroke();
+  ctx.fillStyle = "#94a3b8"; ctx.font = "11px system-ui";
+  for (let t = 0; t <= 10; t += 2) ctx.fillText(String(t), X(t) - 3, H - PADB + 16);
+  ctx.fillText("x", W - PADR - 4, H - PADB + 16);
+  ctx.fillText("y", PADL - 22, PADT + 4);
+
+  // true curve (dashed)
+  ctx.save();
+  ctx.strokeStyle = "#64748b"; ctx.lineWidth = 1.6; ctx.setLineDash([6, 5]);
+  ctx.beginPath();
+  for (let i = 0; i < GRID; i++){
+    const px = X(GX[i]), py = Y(trueFn(GX[i]));
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.stroke(); ctx.restore();
+
+  // base model curves
+  const keys = includedKeys();
+  for (const k of keys){
+    ctx.strokeStyle = COLORS[k]; ctx.lineWidth = 2; ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    const c = curves[k];
+    for (let i = 0; i < GRID; i++){
+      const px = X(GX[i]), py = Y(c[i]);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke(); ctx.globalAlpha = 1;
+  }
+
+  // ensemble: bold green
+  if (ensCurve){
+    ctx.strokeStyle = COLORS.ens; ctx.lineWidth = 5; ctx.lineJoin = "round";
+    ctx.beginPath();
+    for (let i = 0; i < GRID; i++){
+      const px = X(GX[i]), py = Y(ensCurve[i]);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+
+  // scatter
+  for (let i = 0; i < NPTS; i++){
+    ctx.beginPath();
+    ctx.arc(X(XS[i]), Y(YS[i]), 4.5, 0, 2 * Math.PI);
+    ctx.fillStyle = "#94a3b8"; ctx.fill();
+    ctx.strokeStyle = "#0f172a"; ctx.lineWidth = 1; ctx.stroke();
+  }
+
+  // probe line
+  ctx.save();
+  ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(X(state.probe), PADT - 6); ctx.lineTo(X(state.probe), H - PADB); ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = "#e2e8f0"; ctx.font = "11px system-ui";
+  ctx.fillText("probe x = " + state.probe.toFixed(1), X(state.probe) - 34, PADT + 2);
+}
+
+// ---- DOM updates ----
+const statsBox = document.getElementById("stats");
+const probeBox = document.getElementById("probeBox");
+
+function refresh(){
+  const models = buildModels();
+  const curves = {};
+  for (const k of ["lin", "knn", "tree"]){
+    curves[k] = GX.map(function(x){ return models[k](x); });
+  }
+  const ens = ensemblePredict(models);
+  const ensCurve = ens ? GX.map(function(x){ return ens(x); }) : null;
+
+  draw(models, curves, ensCurve);
+
+  // stats
+  let html = "";
+  for (const k of ["lin", "knn", "tree"]){
+    if (state.include[k]){
+      const r = rmseOnGrid(models[k]);
+      html += '<div class="stat"><span class="sw" style="background:' + COLORS[k] + '"></span> ' +
+              '<span class="nm">' + NAMES[k] + ' RMSE:</span> <b>' + r.toFixed(3) + '</b></div>';
+    } else {
+      html += '<div class="stat excluded"><span class="sw" style="background:' + COLORS[k] + '"></span> ' +
+              '<span class="nm">' + NAMES[k] + ' RMSE:</span> <b>excluded</b></div>';
+    }
+  }
+  if (ens){
+    const r = rmseOnGrid(ens);
+    html += '<div class="stat"><span class="sw" style="background:' + COLORS.ens + '"></span> ' +
+            '<span class="nm"><b style="color:#e2e8f0">Ensemble average</b> RMSE:</span> <b>' + r.toFixed(3) + '</b></div>';
+  } else {
+    html += '<div class="stat excluded"><span class="nm">Ensemble:</span> <b>no models included</b></div>';
+  }
+  statsBox.innerHTML = html;
+
+  // probe readout: each included model's number + their mean, like the whiteboard
+  const keys = includedKeys();
+  if (keys.length === 0){
+    probeBox.innerHTML = 'Include at least one model to probe predictions.';
+  } else {
+    const parts = keys.map(function(k){
+      return '<span style="color:' + COLORS[k] + '">●</span> ' + NAMES[k] +
+             ': <span class="pv">' + models[k](state.probe).toFixed(2) + '</span>';
+    });
+    probeBox.innerHTML = 'At x = <b>' + state.probe.toFixed(1) + '</b>:<br>' +
+      parts.join('<br>') + '<br>→ average = <b>' + ens(state.probe).toFixed(2) + '</b>';
+  }
+}
+
+// ---- wire up controls ----
+document.getElementById("ckLin").addEventListener("change", function(e){
+  state.include.lin = e.target.checked; refresh();
+});
+document.getElementById("ckKnn").addEventListener("change", function(e){
+  state.include.knn = e.target.checked; refresh();
+});
+document.getElementById("ckTree").addEventListener("change", function(e){
+  state.include.tree = e.target.checked; refresh();
+});
+document.getElementById("kSlider").addEventListener("input", function(e){
+  state.k = parseInt(e.target.value, 10);
+  document.getElementById("kVal").textContent = String(state.k);
+  refresh();
+});
+document.getElementById("dSlider").addEventListener("input", function(e){
+  state.depth = parseInt(e.target.value, 10);
+  document.getElementById("dVal").textContent = String(state.depth);
+  refresh();
+});
+document.getElementById("pSlider").addEventListener("input", function(e){
+  state.probe = parseFloat(e.target.value);
+  document.getElementById("pVal").textContent = state.probe.toFixed(1);
+  refresh();
+});
+
+refresh();
+</script>
+</body>
+</html>
+](https://itty.bitty.site/#Voting-regressor-demo/data:text/html;charset=utf-8,<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voting Regressor: Averaging Models for Regression — Day 104</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8;
+          --acc:#38bdf8; --good:#4ade80; --warn:#fbbf24; --pink:#f472b6; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .lede { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:10px 14px; font-size:13.5px; line-height:1.8; color:#cbd5e1; margin:12px 0; }
+  .lede b { color:var(--acc); }
+  .lede .formula { color:var(--good); font-weight:700; }
+  .grid { display:grid; grid-template-columns:1.6fr 1fr; gap:14px; margin-top:12px; }
+  @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  canvas { width:100%; height:auto; display:block; background:#0b1220; border-radius:8px; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+              padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin:10px 0; }
+  .model-toggle { display:flex; align-items:center; gap:8px; background:#0b1220;
+                  border:1px solid var(--line); border-radius:8px; padding:8px 12px; font-size:13.5px; }
+  .model-toggle input { width:16px; height:16px; accent-color:var(--acc); cursor:pointer; }
+  .sw { display:inline-block; width:12px; height:12px; border-radius:3px; }
+  .sliderbox { background:#0b1220; border:1px solid var(--line); border-radius:8px;
+               padding:8px 12px; font-size:13px; color:var(--dim); }
+  .sliderbox b { color:var(--txt); }
+  .sliderbox input[type=range] { width:130px; vertical-align:middle; accent-color:var(--acc); }
+  .stat { background:#0b1220; border:1px solid var(--line); border-radius:8px;
+          padding:8px 14px; font-size:13px; min-width:200px; }
+  .stat .nm { color:var(--dim); }
+  .stat b { color:var(--good); }
+  .stat.excluded { opacity:0.45; }
+  .stat.excluded b { color:var(--dim); }
+  .probe { background:#0b1220; border:1px solid var(--line); border-radius:8px;
+           padding:10px 14px; font-size:13.5px; line-height:1.9; margin-top:10px; }
+  .probe b { color:var(--good); }
+  .probe .pv { font-family:ui-monospace,Menlo,monospace; color:var(--warn); }
+  .aside { margin-top:14px; background:#0b1220; border:1px dashed var(--line); border-radius:10px;
+           padding:10px 14px; font-size:13px; color:var(--dim); line-height:1.8; }
+  .aside b { color:var(--warn); }
+  .aside .formula { color:var(--good); font-weight:700; }
+  .legend { font-size:12px; color:var(--dim); margin-top:8px; }
+  .legend .sw { border-radius:50%; margin:0 4px 0 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🤖 Voting Regressor: Averaging Models for Regression
+    <span class="sub">Day 104 — every base model predicts a number; the ensemble predicts their average</span>
+  </h1>
+  <div class="lede">
+    <b>Idea:</b> train three different regressors on the <b>same</b> dataset, ask each one for a
+    prediction, and take the mean:
+    <span class="formula">ŷ = (1/n) · Σ ŷᵢ</span>.
+    Below, a noisy curved dataset is fit by a least-squares line, a k-NN smoother and a small
+    regression tree. Toggle models on and off, tune their knobs, and watch the bold green
+    <b>ensemble average</b> smooth out their individual mistakes — the live RMSE panel scores
+    everyone against the true curve.
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Fitted curves — base models vs. the ensemble average</h3>
+      <canvas id="plot" width="940" height="440"></canvas>
+      <div class="legend">
+        <span class="sw" style="background:#38bdf8"></span>linear
+        <span class="sw" style="background:#fbbf24"></span>k-NN
+        <span class="sw" style="background:#f472b6"></span>tree
+        <span class="sw" style="background:#4ade80"></span>ensemble average
+        <span class="sw" style="background:#94a3b8"></span>training points
+        <span class="sw" style="background:#64748b"></span>true curve
+      </div>
+    </div>
+    <div class="card">
+      <h3>Live RMSE vs. the true curve</h3>
+      <div id="stats" style="display:grid; gap:8px;"></div>
+      <h3 style="margin-top:14px;">🔍 Probe a point, like the whiteboard</h3>
+      <div class="probe" id="probeBox"></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="row" id="toggles">
+      <label class="model-toggle"><input type="checkbox" id="ckLin" checked>
+        <span class="sw" style="background:#38bdf8"></span>Linear regression</label>
+      <label class="model-toggle"><input type="checkbox" id="ckKnn" checked>
+        <span class="sw" style="background:#fbbf24"></span>k-NN regressor</label>
+      <label class="model-toggle"><input type="checkbox" id="ckTree" checked>
+        <span class="sw" style="background:#f472b6"></span>Regression tree</label>
+    </div>
+    <div class="row">
+      <div class="sliderbox">k for k-NN: <b id="kVal">5</b>
+        <input type="range" id="kSlider" min="1" max="15" step="1" value="5"></div>
+      <div class="sliderbox">tree max depth: <b id="dVal">3</b>
+        <input type="range" id="dSlider" min="1" max="5" step="1" value="3"></div>
+      <div class="sliderbox">probe x: <b id="pVal">6.3</b>
+        <input type="range" id="pSlider" min="0" max="10" step="0.1" value="6.3"></div>
+    </div>
+  </div>
+
+  <div class="aside">
+    📋 <b>From the video's whiteboard:</b> the three models predicted
+    <b>6.75</b>, <b>6.2</b> and <b>9.5</b> for one input —
+    (6.75 + 6.2 + 9.5) / 3 = 22.45 / 3 ≈ <span class="formula">7.48</span>.
+    That is the entire algorithm. Drag the <b>probe x</b> slider above to replay the same
+    "each model votes a number, we average" trick on the live models.
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---- deterministic PRNG (fixed seed -> the dataset never changes) ----
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const rng = mulberry32(104);
+function randn(){ // Box-Muller
+  var u = 0, v = 0;
+  while (u === 0) u = rng();
+  while (v === 0) v = rng();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+// ---- the true (unknown to the models) curved function ----
+function trueFn(x){ return 0.09 * (x - 5) * (x - 5) + 1.6 * Math.sin(0.85 * x) + 4.0; }
+
+// ---- fixed noisy dataset: 40 points ----
+const NPTS = 40;
+const XS = [], YS = [];
+for (let i = 0; i < NPTS; i++){
+  const x = rng() * 10;
+  XS.push(x);
+  YS.push(trueFn(x) + randn() * 1.2);
+}
+// sorted copies (handy for the tree's split search)
 const order = XS.map(function(_, i){ return i; }).sort(function(a, b){ return XS[a] - XS[b]; });
 const SX = order.map(function(i){ return XS[i]; });
 const SY = order.map(function(i){ return YS[i]; });
