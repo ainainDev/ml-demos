@@ -66,6 +66,291 @@
   <div class="lede">
     <b>Idea:</b> a decision tree classifies a flower by asking yes/no questions:
     <b>petal length ≤ 2.45?</b> then <b>petal width ≤ 1.75?</b>. Below is the same
+    max\_depth=2 Iris tree from the video's dtreeviz diagram. Move the sliders to
+    change the flower, and the demo <b>lights up the exact path</b> the sample takes,
+    prints the rule chain in plain English, and shows the leaf's class mix.
+  </div>
+
+  <div class="card">
+    <svg id="tree" viewBox="0 0 960 545" role="img" aria-label="decision tree diagram"></svg>
+    <div class="legend">
+      <span class="sw" style="background:#f59e0b"></span>setosa
+      <span class="sw" style="background:#38bdf8"></span>versicolor
+      <span class="sw" style="background:#4ade80"></span>virginica
+      &nbsp;·&nbsp; yellow glow = the sample's prediction path
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <label class="slider">petal length (cm)
+        <input id="slPL" type="range" min="0" max="7" step="0.1" value="5.0">
+        <output id="outPL">5.0</output>
+      </label>
+      <label class="slider">petal width (cm)
+        <input id="slPW" type="range" min="0" max="2.5" step="0.1" value="1.4">
+        <output id="outPW">1.4</output>
+      </label>
+    </div>
+    <div class="row">
+      <button id="pSetosa">🌼 setosa-like (1.4, 0.2)</button>
+      <button id="pVersi">🌸 versicolor-like (4.7, 1.4)</button>
+      <button id="pVirgi">🌺 virginica-like (6.0, 2.2)</button>
+    </div>
+    <div class="rules" id="rules"></div>
+    <div class="result">
+      <div class="pred" id="pred"></div>
+      <div class="leafbar" id="leafbar"></div>
+      <div class="leafstats" id="leafstats"></div>
+    </div>
+    <p class="note">In a Jupyter notebook, the dtreeviz library does all of this for you:
+      <code>viz = ct(clf, X\_train, y\_train, target\_name='species', feature\_names=..., class\_names=...)</code>
+      draws the annotated tree, and dtreeviz can highlight a new sample's prediction path
+      and print it as plain-English rules — exactly what this page simulates in the browser.</p>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---- the tree, hand-coded (same as the dtreeviz diagram in the video) ----
+const CLS = ["setosa", "versicolor", "virginica"];
+const CLS\_C = ["#f59e0b", "#38bdf8", "#4ade80"];
+const NODES = [
+  { id:0, x:470, y:62,  no:0, label:"petal length \u2264 2.45", counts:[50,50,50], leaf:false },
+  { id:1, x:200, y:225, no:1, label:"", counts:[50,0,0], leaf:true, pred:0 },
+  { id:2, x:740, y:225, no:2, label:"petal width \u2264 1.75",  counts:[0,50,50], leaf:false },
+  { id:3, x:615, y:400, no:3, label:"", counts:[0,49,5], leaf:true, pred:1 },
+  { id:4, x:865, y:400, no:4, label:"", counts:[0,1,45], leaf:true, pred:2 },
+];
+const EDGES = [
+  { a:0, b:1, label:"\u2264 2.45 \u00b7 n=50", lx:300, ly:150 },
+  { a:0, b:2, label:"> 2.45 \u00b7 n=100",    lx:635, ly:150 },
+  { a:2, b:3, label:"\u2264 1.75 \u00b7 n=54", lx:657, ly:322 },
+  { a:2, b:4, label:"> 1.75 \u00b7 n=46",      lx:832, ly:322 },
+];
+const BW = 200, BH = 104;   // node box width/height
+
+// ---- pure logic: prediction path for one sample ----
+function pathFor(pl, pw){
+  const p = [0];
+  if (pl <= 2.45){ p.push(1); }
+  else { p.push(2); if (pw <= 1.75) p.push(3); else p.push(4); }
+  return p;
+}
+function edgeOnPath(path, a, b){
+  const i = path.indexOf(a);
+  return i >= 0 && path[i + 1] === b;
+}
+
+// ---- svg helpers ----
+const NS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("tree");
+function el(tag, attrs){
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+function text(x, y, str, cls, anchor){
+  const t = el("text", { x:x, y:y, "class":cls, "text-anchor":anchor || "middle" });
+  t.textContent = str;
+  return t;
+}
+
+// draw edges first (under the nodes)
+const edgeEls = {};
+for (const e of EDGES){
+  const A = NODES[e.a], B = NODES[e.b];
+  const ln = el("line", { x1:A.x, y1:A.y + BH/2, x2:B.x, y2:B.y - BH/2, "class":"edge" });
+  ln.id = "e" + e.a + e.b;
+  svg.appendChild(ln);
+  const lt = text(e.lx, e.ly, e.label, "elabel");
+  svg.appendChild(lt);
+  edgeEls[e.a + ">" + e.b] = ln;
+}
+// draw nodes
+const nodeEls = {};
+for (const n of NODES){
+  const g = el("g", {});
+  const box = el("rect", { x:n.x - BW/2, y:n.y - BH/2, width:BW, height:BH, rx:12,
+                           "class":"node-box" + (n.leaf ? " leaf" : "") });
+  box.id = "n" + n.id;
+  if (n.leaf) box.setAttribute("stroke", CLS\_C[n.pred]);
+  g.appendChild(box);
+  g.appendChild(text(n.x, n.y - BH/2 + 22, "Node " + n.no, "nno"));
+  if (n.leaf){
+    const t = text(n.x, n.y - BH/2 + 44, "\u2192 predict: " + CLS[n.pred], "nsplit");
+    t.setAttribute("fill", CLS\_C[n.pred]);
+    g.appendChild(t);
+  } else {
+    g.appendChild(text(n.x, n.y - BH/2 + 44, n.label, "nsplit"));
+  }
+  // mini class-distribution bar
+  const total = n.counts.reduce((a, b) => a + b, 0);
+  const bx = n.x - 82, bw = 164, by = n.y + 2;
+  g.appendChild(el("rect", { x:bx, y:by, width:bw, height:16, fill:"#0b1220",
+                             stroke:"#334155", "stroke-width":1 }));
+  let xx = bx;
+  n.counts.forEach(function(c, i){
+    const w = bw * c / total;
+    if (w > 0.5){
+      g.appendChild(el("rect", { x:xx, y:by, width:w, height:16, fill:CLS\_C[i] }));
+    }
+    xx += w;
+  });
+  const nz = CLS.map(function(c, i){ return n.counts[i] > 0 ? c + ":" + n.counts[i] : null; })
+                .filter(Boolean).join("  ");
+  g.appendChild(text(n.x, by + 34, "n=" + total + "  " + nz, "ncounts"));
+  svg.appendChild(g);
+  nodeEls[n.id] = box;
+}
+
+// ---- prediction UI ----
+const slPL = document.getElementById("slPL"), slPW = document.getElementById("slPW");
+const outPL = document.getElementById("outPL"), outPW = document.getElementById("outPW");
+const rulesBox = document.getElementById("rules");
+const predBox = document.getElementById("pred");
+const leafBar = document.getElementById("leafbar");
+const leafStats = document.getElementById("leafstats");
+let animToken = 0;
+
+function render(){
+  const pl = parseFloat(slPL.value), pw = parseFloat(slPW.value);
+  outPL.textContent = pl.toFixed(1);
+  outPW.textContent = pw.toFixed(1);
+  const path = pathFor(pl, pw);
+
+  // clear old highlight
+  for (const k in nodeEls) nodeEls[k].classList.remove("hot");
+  for (const k in edgeEls) edgeEls[k].classList.remove("hot");
+
+  // animate the path: nodes light up one at a time
+  const tok = ++animToken;
+  path.forEach(function(nid, i){
+    setTimeout(function(){
+      if (tok !== animToken) return;
+      nodeEls[nid].classList.add("hot");
+      if (i > 0) edgeEls[path[i-1] + ">" + nid].classList.add("hot");
+    }, i * 350);
+  });
+
+  // plain-English rule chain
+  const steps = [];
+  const d0 = pl <= 2.45;
+  steps.push('<div class="step">1. petal length (' + pl.toFixed(1) + ') \u2264 2.45? ' +
+    (d0 ? '<span class="yes">YES</span> \u2192 left branch (n=50)'
+        : '<span class="no">NO</span> \u2192 right branch (n=100)') + '</div>');
+  if (!d0){
+    const d1 = pw <= 1.75;
+    steps.push('<div class="step">2. petal width (' + pw.toFixed(1) + ') \u2264 1.75? ' +
+      (d1 ? '<span class="yes">YES</span> \u2192 left branch (n=54)'
+          : '<span class="no">NO</span> \u2192 right branch (n=46)') + '</div>');
+  }
+  const leaf = NODES[path[path.length - 1]];
+  const total = leaf.counts.reduce((a, b) => a + b, 0);
+  const majority = leaf.counts[leaf.pred];
+  const pct = (100 * majority / total).toFixed(1);
+  steps.push('<div class="step final">\u2192 predicted: ' + CLS[leaf.pred] +
+    ' \u2014 ' + majority + '/' + total + ' leaf samples (' + pct + '%)</div>');
+  rulesBox.innerHTML = steps.join("");
+
+  // predicted class + leaf distribution bar
+  predBox.innerHTML = 'predicted: <b style="color:' + CLS\_C[leaf.pred] + '">' +
+    CLS[leaf.pred] + '</b>';
+  leafBar.innerHTML = "";
+  leaf.counts.forEach(function(c, i){
+    const d = document.createElement("div");
+    d.className = ["set", "ver", "vir"][i];
+    d.style.width = (100 * c / total) + "%";
+    d.title = CLS[i] + ": " + c;
+    leafBar.appendChild(d);
+  });
+  leafStats.textContent = "leaf n=" + total + " · " +
+    CLS.map(function(c, i){ return c + ":" + leaf.counts[i]; }).join("  ");
+}
+
+[slPL, slPW].forEach(function(s){ s.addEventListener("input", render); });
+document.getElementById("pSetosa").addEventListener("click", function(){
+  slPL.value = 1.4; slPW.value = 0.2; render();
+});
+document.getElementById("pVersi").addEventListener("click", function(){
+  slPL.value = 4.7; slPW.value = 1.4; render();
+});
+document.getElementById("pVirgi").addEventListener("click", function(){
+  slPL.value = 6.0; slPW.value = 2.2; render();
+});
+
+render();
+</script>
+</body>
+</html>
+](https://itty.bitty.site/#Tree-viz-playground/data:text/html;charset=utf-8,<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision-Tree Visualizer Playground — Day 100</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8;
+          --acc:#38bdf8; --good:#4ade80; --amber:#fbbf24;
+          --set:#f59e0b; --ver:#38bdf8; --vir:#4ade80; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:1020px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .lede { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:10px 14px; font-size:13.5px; line-height:1.7; color:#cbd5e1; margin:12px 0; }
+  .lede b { color:var(--acc); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  svg { width:100%; height:auto; display:block; background:#0b1220; border-radius:8px; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+              padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin:10px 0; }
+  label.slider { flex:1 1 280px; font-size:13px; color:var(--dim); }
+  label.slider output { color:#fff; font-weight:700; margin-left:8px; font-size:14px; }
+  input[type=range] { width:100%; accent-color:#38bdf8; }
+  button { background:#0369a1; color:#fff; border:0; border-radius:8px;
+           padding:8px 16px; font-size:13.5px; cursor:pointer; }
+  button:hover { background:#0284c7; }
+  .rules { background:#0b1220; border:1px solid var(--line); border-radius:8px;
+           padding:10px 14px; font-size:13.5px; line-height:1.9; margin-top:10px; min-height:118px; }
+  .rules .step { color:#cbd5e1; }
+  .rules .yes { color:var(--good); font-weight:700; }
+  .rules .no { color:#f87171; font-weight:700; }
+  .rules .final { color:var(--amber); font-weight:700; }
+  .result { display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-top:10px; }
+  .pred { font-size:16px; }
+  .pred b { font-size:20px; }
+  .leafbar { display:flex; height:26px; border-radius:6px; overflow:hidden;
+             border:1px solid var(--line); min-width:240px; flex:1 1 240px; }
+  .leafbar div { height:100%; }
+  .leafbar .set { background:var(--set); } .leafbar .ver { background:var(--ver); }
+  .leafbar .vir { background:var(--vir); }
+  .leafstats { font-size:12px; color:var(--dim); }
+  .note { font-size:12.5px; color:var(--dim); margin-top:10px; line-height:1.6; }
+  .legend { font-size:12px; color:var(--dim); margin-top:8px; }
+  .legend .sw { display:inline-block; width:10px; height:10px; border-radius:3px; margin:0 4px 0 12px; }
+  .node-box { fill:var(--panel); stroke:#64748b; stroke-width:1.8; transition:stroke .25s, filter .25s; }
+  .node-box.leaf { stroke-width:2.2; }
+  .hot { stroke:var(--amber) !important; stroke-width:3.2 !important;
+         filter:drop-shadow(0 0 8px rgba(251,191,36,.75)); }
+  .edge { stroke:#64748b; stroke-width:2; transition:stroke .25s, filter .25s; }
+  .edge.hot { stroke:var(--amber); stroke-width:3.2; filter:drop-shadow(0 0 6px rgba(251,191,36,.7)); }
+  .elabel { fill:#fbbf24; font-size:13px; font-weight:700; }
+  .nno { fill:#94a3b8; font-size:11px; }
+  .nsplit { fill:#e8eef7; font-size:14px; font-weight:700; }
+  .ncounts { fill:#94a3b8; font-size:10.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🌳 Decision-Tree Visualizer Playground
+    <span class="sub">Day 100 — drag the sliders and watch a new sample walk down the tree</span>
+  </h1>
+  <div class="lede">
+    <b>Idea:</b> a decision tree classifies a flower by asking yes/no questions:
+    <b>petal length ≤ 2.45?</b> then <b>petal width ≤ 1.75?</b>. Below is the same
     max_depth=2 Iris tree from the video's dtreeviz diagram. Move the sliders to
     change the flower, and the demo <b>lights up the exact path</b> the sample takes,
     prints the rule chain in plain English, and shows the leaf's class mix.
