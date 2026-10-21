@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naive Bayes Mathematics — Day 88</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8; --acc:#38bdf8; --good:#4ade80; --bad:#f43f5e; --warn:#fbbf24; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .math { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:13.5px; line-height:1.9; color:#cbd5e1; margin:12px 0; }
+  .math b { color:var(--acc); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:12px; border-left:4px solid var(--acc); }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  .card.hidden-step { display:none; }
+  .formula { font-size:19px; text-align:center; padding:10px 0; color:#e2e8f0; }
+  .formula b { color:var(--acc); }
+  .explain { font-size:13.5px; line-height:1.9; color:#cbd5e1; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin:8px 0; }
+  button { background:#0369a1; color:#fff; border:0; border-radius:8px; padding:9px 18px; font-size:14px; cursor:pointer; }
+  button:hover { background:#0284c7; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--txt); }
+  table.counts { border-collapse:collapse; margin:10px auto; font-size:13.5px; }
+  table.counts th, table.counts td { border:1px solid var(--line); padding:7px 16px; text-align:center; }
+  table.counts th { color:var(--dim); font-weight:600; background:#0b1220; }
+  table.counts td b { color:var(--acc); }
+  .calc { font-size:13.5px; line-height:2; color:#cbd5e1; background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin-top:8px; }
+  .calc b { color:var(--warn); }
+  .note { font-size:12.5px; color:var(--dim); margin-top:10px; line-height:1.6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔢 Naive Bayes — The Mathematics
+    <span class="sub">Day 88 — Naive Bayes, Part 7 · reveal each step of the derivation</span>
+  </h1>
+
+  <div class="math">
+    Goal: given features X = (x₁, x₂, …, xₙ), pick the class y with the highest <b>P(y | X)</b>.
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <button id="nextBtn">Reveal step →</button>
+      <button id="resetBtn" class="ghost">Reset</button>
+      <span style="font-size:13px;color:var(--dim)" id="stepHint">Step 0 of 4</span>
+    </div>
+  </div>
+
+  <div class="card hidden-step" id="step1">
+    <h3>Step 1 — Start from Bayes' theorem</h3>
+    <div class="formula"><b>P(y | X)</b> = P(X | y)·P(y) / P(X)</div>
+    <div class="explain">The posterior is the likelihood of the features under class y, times the prior of class y, divided by the evidence P(X). The snag: P(X | y) for <em>many</em> features at once is almost impossible to estimate directly — we'd need to see every combination of feature values in every class.</div>
+  </div>
+
+  <div class="card hidden-step" id="step2">
+    <h3>Step 2 — The "naive" assumption: conditional independence</h3>
+    <div class="formula"><b>P(X | y)</b> = P(x₁ | y) · P(x₂ | y) · … · P(xₙ | y)</div>
+    <div class="explain">Assume the features are independent <em>given the class</em>. Then the giant joint likelihood splits into small, one-feature likelihoods we can actually count from training data. It's naive because real features often correlate — but it makes the math tractable, and empirically it works.</div>
+  </div>
+
+  <div class="card hidden-step" id="step3">
+    <h3>Step 3 — Drop P(X): the decision rule</h3>
+    <div class="formula">ŷ = <b>argmax<sub>y</sub></b> P(y) · ∏ P(xᵢ | y)</div>
+    <div class="explain">The evidence P(X) doesn't depend on the class y, so it's the same for every candidate class — it only rescales all scores equally and can't change which class wins. Drop it, and the winner is simply the class maximizing <b>prior × product of per-feature likelihoods</b>.</div>
+  </div>
+
+  <div class="card hidden-step" id="step4">
+    <h3>Step 4 — Numeric mini-example: 2 binary features</h3>
+    <div class="explain">Training counts — 6 spam, 6 ham emails. Feature x₁ = contains "offer", x₂ = contains "click".</div>
+    <table class="counts">
+      <tr><th>class</th><th>P(y)</th><th>P(x₁=yes|y)</th><th>P(x₂=no|y)</th></tr>
+      <tr><td>spam</td><td><b>6/12</b></td><td><b>5/6</b></td><td><b>2/6</b></td></tr>
+      <tr><td>ham</td><td><b>6/12</b></td><td><b>1/6</b></td><td><b>4/6</b></td></tr>
+    </table>
+    <div class="explain">New email: x₁ = yes, x₂ = no.</div>
+    <div class="calc" id="calc"></div>
+  </div>
+
+  <p class="note">In practice we work in <b>log space</b> — log P(y) + Σ log P(xᵢ|y) — because multiplying dozens of tiny probabilities underflows to zero, while adding logs stays safe. The argmax is unchanged since log is monotonic.</p>
+</div>
+
+<script>
+"use strict";
+// ---- pure math: top-level ----
+function nbScores(priorS, priorH, likS, likH) {
+  // likS = [P(x1|spam), P(x2|spam)], likH likewise
+  const s = priorS * likS[0] * likS[1];
+  const h = priorH * likH[0] * likH[1];
+  const total = s + h;
+  return { rawS: s, rawH: h, postS: total === 0 ? 0 : s / total, postH: total === 0 ? 0 : h / total };
+}
+
+let step = 0;
+function showStep(n) {
+  step = n;
+  for (let i = 1; i <= 4; i++) {
+    document.getElementById("step" + i).classList.toggle("hidden-step", i > n);
+  }
+  document.getElementById("stepHint").textContent = "Step " + n + " of 4";
+  document.getElementById("nextBtn").textContent = n >= 4 ? "Done ✓" : "Reveal step →";
+}
+function fillCalc() {
+  const r = nbScores(6 / 12, 6 / 12, [5 / 6, 2 / 6], [1 / 6, 4 / 6]);
+  document.getElementById("calc").innerHTML =
+    "score(spam) ∝ P(spam)·P(x₁=yes|spam)·P(x₂=no|spam) = (6/12) × (5/6) × (2/6) = <b>" + r.rawS.toFixed(4) + "</b><br>" +
+    "score(ham) ∝ P(ham)·P(x₁=yes|ham)·P(x₂=no|ham) = (6/12) × (1/6) × (4/6) = <b>" + r.rawH.toFixed(4) + "</b><br>" +
+    "Normalize: P(spam|X) = " + r.rawS.toFixed(4) + " / (" + r.rawS.toFixed(4) + " + " + r.rawH.toFixed(4) + ") = <b>" + (r.postS * 100).toFixed(1) + "%</b>; " +
+    "P(ham|X) = <b>" + (r.postH * 100).toFixed(1) + "%</b><br>" +
+    "→ ŷ = <b>" + (r.postS > r.postH ? "spam" : "ham") + "</b> (the larger score wins).";
+}
+document.getElementById("nextBtn").addEventListener("click", function () {
+  if (step < 4) { showStep(step + 1); document.getElementById("step" + step).scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+});
+document.getElementById("resetBtn").addEventListener("click", function () { showStep(0); });
+fillCalc();
+showStep(0);
+</script>
+</body>
+</html>

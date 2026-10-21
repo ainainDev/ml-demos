@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bayes Theorem — Worked Problem — Day 86</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8; --acc:#38bdf8; --good:#4ade80; --bad:#f43f5e; --warn:#fbbf24; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .math { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:13.5px; line-height:1.9; color:#cbd5e1; margin:12px 0; }
+  .math b { color:var(--acc); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; margin-top:12px; }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  .card.step { border-left:4px solid var(--acc); }
+  .card.hidden-step { display:none; }
+  canvas { width:100%; height:auto; display:block; background:#0b1220; border-radius:8px; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin:8px 0; }
+  label { font-size:13px; color:var(--dim); display:flex; align-items:center; gap:8px; }
+  label output { color:var(--acc); font-weight:700; min-width:60px; }
+  input[type=range] { width:180px; accent-color:var(--acc); }
+  button { background:#0369a1; color:#fff; border:0; border-radius:8px; padding:9px 18px; font-size:14px; cursor:pointer; }
+  button:hover { background:#0284c7; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--txt); }
+  .stats { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+  .stat { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:8px 14px; font-size:13px; }
+  .stat b { color:var(--acc); }
+  .stat.big b { color:var(--warn); font-size:17px; }
+  .step-body { font-size:13.5px; line-height:1.9; color:#cbd5e1; }
+  .step-body b { color:var(--acc); }
+  .note { font-size:12.5px; color:var(--dim); margin-top:10px; line-height:1.6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>✉️ Bayes' Theorem — Worked Spam Problem
+    <span class="sub">Day 86 — Naive Bayes, Part 5 · step-by-step: is an email with the word "offer" spam?</span>
+  </h1>
+
+  <div class="math">
+    <b>Scenario:</b> an incoming email contains the word <b>"offer"</b>. Given the spam/ham rates below, what is P(spam | "offer")?<br>
+    Change the inputs, then press <b>Next step</b> to walk through the four steps.
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <label>P(spam) <input type="range" id="prior" min="1" max="90" step="1" value="30"><output id="priorOut">30%</output></label>
+      <label>P("offer"|spam) <input type="range" id="likS" min="1" max="99" step="1" value="70"><output id="likSOut">70%</output></label>
+      <label>P("offer"|ham) <input type="range" id="likH" min="1" max="99" step="1" value="10"><output id="likHOut">10%</output></label>
+    </div>
+    <div class="row">
+      <button id="nextBtn">Next step →</button>
+      <button id="resetBtn" class="ghost">Reset</button>
+      <span style="font-size:13px;color:var(--dim)" id="stepHint">Step 0 of 4</span>
+    </div>
+  </div>
+
+  <div class="card step hidden-step" id="step1">
+    <h3>Step 1 — The prior: what we believed before seeing the word</h3>
+    <div class="step-body" id="body1"></div>
+  </div>
+  <div class="card step hidden-step" id="step2">
+    <h3>Step 2 — The likelihoods: how often each class uses the word "offer"</h3>
+    <div class="step-body" id="body2"></div>
+  </div>
+  <div class="card step hidden-step" id="step3">
+    <h3>Step 3 — The evidence: total chance of seeing "offer" (law of total probability)</h3>
+    <div class="step-body" id="body3"></div>
+  </div>
+  <div class="card step hidden-step" id="step4">
+    <h3>Step 4 — The posterior: flip the condition with Bayes' theorem</h3>
+    <div class="step-body" id="body4"></div>
+  </div>
+
+  <div class="card">
+    <h3>Probability tree — the spam path is highlighted</h3>
+    <canvas id="tree" width="640" height="300"></canvas>
+  </div>
+
+  <p class="note" style="font-size:12.5px;color:var(--dim);line-height:1.6">This exact four-step pattern — prior, likelihood, evidence, posterior — is the skeleton of every Naive Bayes classifier. The next videos just add one twist: combining the likelihoods of <em>many</em> words at once.</p>
+</div>
+
+<script>
+"use strict";
+// ---- pure math: top-level ----
+function bayesSteps(prior, likSpam, likHam) {
+  const ham = 1 - prior;
+  const evidence = likSpam * prior + likHam * ham;          // P("offer")
+  const posterior = evidence === 0 ? 0 : (likSpam * prior) / evidence; // P(spam|"offer")
+  return { ham, evidence, posterior };
+}
+const f3 = v => (v * 100).toFixed(1);
+
+let prior = 0.30, likSpam = 0.70, likHam = 0.10;
+let step = 0;
+
+const cvs = document.getElementById("tree");
+const ctx = cvs.getContext("2d");
+
+function drawTree() {
+  const W = cvs.width, H = cvs.height;
+  ctx.clearRect(0, 0, W, H);
+  const rootX = 90, rootY = H / 2;
+  const spamY = 70, hamY = H - 70;
+  const leafX = W - 90;
+  const s = bayesSteps(prior, likSpam, likHam);
+
+  function node(x, y, r, fill, stroke, label, sub) {
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI);
+    ctx.fillStyle = fill; ctx.fill();
+    ctx.strokeStyle = stroke; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.fillStyle = "#e2e8f0"; ctx.font = "bold 13px system-ui"; ctx.textAlign = "center";
+    ctx.fillText(label, x, y + 4);
+    if (sub) { ctx.fillStyle = "#94a3b8"; ctx.font = "11.5px system-ui"; ctx.fillText(sub, x, y + r + 16); }
+  }
+  function edge(x1, y1, x2, y2, label, hot) {
+    ctx.strokeStyle = hot ? "#4ade80" : "#475569"; ctx.lineWidth = hot ? 3 : 2;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    ctx.fillStyle = hot ? "#4ade80" : "#94a3b8"; ctx.font = "bold 12.5px system-ui"; ctx.textAlign = "center";
+    ctx.fillText(label, (x1 + x2) / 2, (y1 + y2) / 2 - 8);
+  }
+
+  node(rootX, rootY, 30, "#1e293b", "#38bdf8", "Email", "");
+  edge(rootX + 28, rootY - 10, leafX - 170, spamY, f3(prior) + "%", true);
+  edge(rootX + 28, rootY + 10, leafX - 170, hamY, f3(s.ham) + "%", false);
+  node(leafX - 170, spamY, 30, "#14532d", "#4ade80", "spam", 'has "offer" ' + f3(likSpam) + "%");
+  node(leafX - 170, hamY, 30, "#1e293b", "#fbbf24", "ham", 'has "offer" ' + f3(likHam) + "%");
+  // "offer" end leaves
+  edge(leafX - 140, spamY, leafX - 28, spamY - 2, 'offer ' + f3(likSpam * prior) + "%", true);
+  edge(leafX - 140, hamY, leafX - 28, hamY + 2, 'offer ' + f3(likHam * s.ham) + "%", false);
+  node(leafX, spamY, 26, "#052e16", "#4ade80", '"offer"', "spam path");
+  node(leafX, hamY, 26, "#1e293b", "#64748b", '"offer"', "ham path");
+
+  ctx.fillStyle = "#64748b"; ctx.font = "12px system-ui"; ctx.textAlign = "center";
+  ctx.fillText("the green path is P(spam ∩ \"offer\") — divide it by ALL \"offer\" paths to get P(spam | \"offer\")", W / 2, 24);
+}
+
+function refreshBodies() {
+  const s = bayesSteps(prior, likSpam, likHam);
+  document.getElementById("body1").innerHTML =
+    "Before reading any word, our best guess comes from base rates: P(spam) = <b>" + f3(prior) + "%</b>, so P(ham) = 1 − " + f3(prior) + "% = <b>" + f3(s.ham) + "%</b>.";
+  document.getElementById("body2").innerHTML =
+    "Spam emails use \"offer\" aggressively: P(\"offer\" | spam) = <b>" + f3(likSpam) + "%</b>. " +
+    "Normal mail rarely does: P(\"offer\" | ham) = <b>" + f3(likHam) + "%</b>. These are measured from labelled training data.";
+  document.getElementById("body3").innerHTML =
+    "How often does <em>any</em> email contain \"offer\"? Add both routes:<br>" +
+    "P(\"offer\") = P(\"offer\"|spam)·P(spam) + P(\"offer\"|ham)·P(ham) = " + f3(likSpam) + "% × " + f3(prior) + "% + " + f3(likHam) + "% × " + f3(s.ham) + "% = <b>" + f3(s.evidence) + "%</b>.";
+  document.getElementById("body4").innerHTML =
+    "Bayes: P(spam | \"offer\") = P(\"offer\"|spam)·P(spam) / P(\"offer\") = (" + f3(likSpam) + "% × " + f3(prior) + "%) / " + f3(s.evidence) + "% = <b>" + f3(s.posterior) + "%</b>. " +
+    (s.posterior >= 0.5 ? "Above 50% → classify as <b>spam</b>." : "Below 50% → classify as <b>ham</b>.");
+}
+
+function showStep(n) {
+  step = n;
+  for (let i = 1; i <= 4; i++) {
+    document.getElementById("step" + i).classList.toggle("hidden-step", i > n);
+  }
+  document.getElementById("stepHint").textContent = "Step " + n + " of 4";
+  if (n >= 4) document.getElementById("nextBtn").textContent = "Done ✓";
+  else document.getElementById("nextBtn").textContent = "Next step →";
+}
+
+function readInputs() {
+  prior = document.getElementById("prior").value / 100;
+  likSpam = document.getElementById("likS").value / 100;
+  likHam = document.getElementById("likH").value / 100;
+  document.getElementById("priorOut").textContent = Math.round(prior * 100) + "%";
+  document.getElementById("likSOut").textContent = Math.round(likSpam * 100) + "%";
+  document.getElementById("likHOut").textContent = Math.round(likHam * 100) + "%";
+  refreshBodies();
+  drawTree();
+}
+["prior", "likS", "likH"].forEach(id => {
+  document.getElementById(id).addEventListener("input", function () {
+    readInputs();
+    if (step > 0) showStep(step); // keep revealed steps visible with new numbers
+  });
+});
+document.getElementById("nextBtn").addEventListener("click", function () {
+  if (step < 4) { showStep(step + 1); document.getElementById("step" + (step)).scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+});
+document.getElementById("resetBtn").addEventListener("click", function () { showStep(0); });
+
+readInputs();
+showStep(0);
+</script>
+</body>
+</html>

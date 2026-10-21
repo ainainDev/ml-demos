@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Independent Events — Coin Experiment — Day 83</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8; --acc:#38bdf8; --good:#4ade80; --bad:#f43f5e; --warn:#fbbf24; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .math { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:13.5px; line-height:1.9; color:#cbd5e1; margin:12px 0; }
+  .math b { color:var(--acc); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  canvas { width:100%; height:auto; display:block; background:#0b1220; border-radius:8px; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin:8px 0; }
+  label { font-size:13px; color:var(--dim); display:flex; align-items:center; gap:8px; }
+  label output { color:var(--acc); font-weight:700; min-width:60px; }
+  input[type=range] { width:220px; accent-color:var(--acc); }
+  .stats { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+  .stat { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:8px 14px; font-size:13px; }
+  .stat b { color:var(--acc); }
+  .note { font-size:12.5px; color:var(--dim); margin-top:10px; line-height:1.6; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
+  @media (max-width:640px){ .grid2 { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🪙 Independent Events — Coin Experiment
+    <span class="sub">Day 83 — Naive Bayes, Part 1 · toss two fair coins and test the definition</span>
+  </h1>
+
+  <div class="math">
+    A = "coin 1 lands heads", &nbsp; B = "coin 2 lands heads"<br>
+    <b>Independent</b> means: P(A∩B) = P(A) · P(B) &nbsp;—&nbsp; knowing A happened tells you <em>nothing</em> about B.
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>Gap |P(A∩B) − P(A)·P(B)| vs tosses (log scale)</h3>
+      <canvas id="gapplot" width="420" height="300"></canvas>
+    </div>
+    <div class="card">
+      <h3>P(A∩B) vs P(A)·P(B) at current N</h3>
+      <canvas id="bars" width="420" height="300"></canvas>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <label>Tosses N <input type="range" id="n" min="10" max="10000" step="1" value="200"><output id="nOut">200</output></label>
+    </div>
+    <div class="stats">
+      <div class="stat">P(A) <b id="stA">–</b></div>
+      <div class="stat">P(B) <b id="stB">–</b></div>
+      <div class="stat">P(A∩B) <b id="stAB">–</b></div>
+      <div class="stat">P(A)·P(B) <b id="stProd">–</b></div>
+      <div class="stat">Gap <b id="stGap">–</b></div>
+    </div>
+    <p class="note">With only a few tosses the empirical gap jumps around — small samples are noisy. As N grows, the gap between P(A∩B) and P(A)·P(B) collapses toward zero: the two coins really are independent. Contrast this with <em>mutually exclusive</em> events (Video 84, Part 3), where P(A∩B) is stuck at 0 — independence and mutual exclusivity are opposites, not synonyms.</p>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---- deterministic pseudo-random generator (fixed seed) ----
+let seed = 2026083;
+function rand() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+
+// ---- pure math: top-level ----
+function gapAt(n, c1, c2, c12) {
+  const pa = c1 / n, pb = c2 / n, pab = c12 / n;
+  return Math.abs(pab - pa * pb);
+}
+
+// ---- fixed simulation: two fair coins tossed N_MAX times ----
+const N_MAX = 10000;
+const cum1 = new Array(N_MAX + 1), cum2 = new Array(N_MAX + 1), cum12 = new Array(N_MAX + 1);
+cum1[0] = cum2[0] = cum12[0] = 0;
+for (let i = 1; i <= N_MAX; i++) {
+  const h1 = rand() < 0.5, h2 = rand() < 0.5;
+  cum1[i] = cum1[i - 1] + (h1 ? 1 : 0);
+  cum2[i] = cum2[i - 1] + (h2 ? 1 : 0);
+  cum12[i] = cum12[i - 1] + (h1 && h2 ? 1 : 0);
+}
+// log-spaced checkpoint Ns
+const checkpoints = [];
+for (let k = 1; k <= 4; k++) checkpoints.push(Math.pow(10, k)); // 10,100,1000,10000
+[25, 50, 250, 500, 2500, 5000].forEach(v => checkpoints.push(v));
+checkpoints.sort((a, b) => a - b);
+
+let N = 200;
+
+function drawGap() {
+  const c = document.getElementById("gapplot"), ctx = c.getContext("2d");
+  const W = c.width, H = c.height;
+  ctx.clearRect(0, 0, W, H);
+  const PAD = { l: 48, r: 12, t: 14, b: 30 };
+  const xMin = 1, xMax = 4; // log10
+  const pts = checkpoints.filter(n => n <= N).map(n => [Math.log10(n), gapAt(n, cum1[n], cum2[n], cum12[n])]);
+  let yMax = 0.02;
+  pts.forEach(p => { yMax = Math.max(yMax, p[1]); });
+  const X = v => PAD.l + (v - xMin) / (xMax - xMin) * (W - PAD.l - PAD.r);
+  const Y = v => H - PAD.b - (v / yMax) * (H - PAD.t - PAD.b);
+  ctx.strokeStyle = "#334155"; ctx.fillStyle = "#64748b"; ctx.font = "11px system-ui"; ctx.textAlign = "center";
+  [10, 100, 1000, 10000].forEach(n => ctx.fillText(n, X(Math.log10(n)), H - 10));
+  ctx.textAlign = "right";
+  for (let g = 0; g <= 5; g++) { const v = yMax * g / 5; ctx.fillText(v.toFixed(3), PAD.l - 6, Y(v) + 4); }
+  // zero line
+  ctx.strokeStyle = "#4ade80"; ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(PAD.l, Y(0)); ctx.lineTo(W - PAD.r, Y(0)); ctx.stroke();
+  ctx.setLineDash([]);
+  // trajectory
+  ctx.strokeStyle = "#38bdf8"; ctx.lineWidth = 2.5; ctx.beginPath();
+  pts.forEach((p, i) => { if (i === 0) ctx.moveTo(X(p[0]), Y(p[1])); else ctx.lineTo(X(p[0]), Y(p[1])); });
+  ctx.stroke();
+  ctx.fillStyle = "#38bdf8";
+  pts.forEach(p => { ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 4, 0, 2 * Math.PI); ctx.fill(); });
+}
+
+function drawBars() {
+  const c = document.getElementById("bars"), ctx = c.getContext("2d");
+  const W = c.width, H = c.height;
+  ctx.clearRect(0, 0, W, H);
+  const pa = cum1[N] / N, pb = cum2[N] / N, pab = cum12[N] / N, prod = pa * pb;
+  const data = [["P(A∩B)", pab, "#38bdf8"], ["P(A)·P(B)", prod, "#fbbf24"]];
+  const maxV = Math.max(0.3, pab, prod) * 1.15;
+  const bw = 90, gap = 60, x0 = W / 2 - bw - gap / 2;
+  data.forEach((d, i) => {
+    const x = x0 + i * (bw + gap), h = (d[1] / maxV) * (H - 80);
+    ctx.fillStyle = d[2];
+    ctx.fillRect(x, H - 50 - h, bw, h);
+    ctx.fillStyle = "#e2e8f0"; ctx.font = "bold 15px system-ui"; ctx.textAlign = "center";
+    ctx.fillText(d[1].toFixed(4), x + bw / 2, H - 58 - h);
+    ctx.fillStyle = "#94a3b8"; ctx.font = "13px system-ui";
+    ctx.fillText(d[0], x + bw / 2, H - 28);
+  });
+  ctx.fillStyle = "#64748b"; ctx.font = "12px system-ui";
+  ctx.fillText("the two bars meet as N grows → independence", W / 2, 18);
+}
+
+function update() {
+  const pa = cum1[N] / N, pb = cum2[N] / N, pab = cum12[N] / N, prod = pa * pb;
+  const gap = gapAt(N, cum1[N], cum2[N], cum12[N]);
+  document.getElementById("nOut").textContent = N;
+  document.getElementById("stA").textContent = pa.toFixed(4);
+  document.getElementById("stB").textContent = pb.toFixed(4);
+  document.getElementById("stAB").textContent = pab.toFixed(4);
+  document.getElementById("stProd").textContent = prod.toFixed(4);
+  document.getElementById("stGap").textContent = gap.toFixed(5);
+  drawGap(); drawBars();
+}
+document.getElementById("n").addEventListener("input", function () {
+  N = parseInt(this.value, 10);
+  update();
+});
+update();
+</script>
+</body>
+</html>

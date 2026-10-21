@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naive Bayes Intuition — Spam Classifier — Day 87</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8; --acc:#38bdf8; --good:#4ade80; --bad:#f43f5e; --warn:#fbbf24; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .math { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:13.5px; line-height:1.9; color:#cbd5e1; margin:12px 0; }
+  .math b { color:var(--acc); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  canvas { width:100%; height:auto; display:block; background:#0b1220; border-radius:8px; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin:8px 0; }
+  label { font-size:13px; color:var(--dim); display:flex; align-items:center; gap:8px; }
+  input[type=text] { background:#0b1220; border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:9px 12px; font-size:14px; width:min(420px, 90vw); }
+  button { background:#0369a1; color:#fff; border:0; border-radius:8px; padding:9px 18px; font-size:14px; cursor:pointer; }
+  button:hover { background:#0284c7; }
+  .stats { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+  .stat { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:8px 14px; font-size:13px; }
+  .stat b { color:var(--acc); }
+  .stat.winner b { color:var(--warn); font-size:16px; }
+  .note { font-size:12.5px; color:var(--dim); margin-top:10px; line-height:1.6; }
+  .wordchips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .chip { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:5px 10px; font-size:12.5px; }
+  .chip.spam { border-color:var(--bad); } .chip.spam b { color:var(--bad); }
+  .chip.ham { border-color:var(--good); } .chip.ham b { color:var(--good); }
+  .train { font-size:12.5px; color:var(--dim); line-height:1.8; margin-top:8px; }
+  .train .s { color:var(--bad); } .train .h { color:var(--good); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🧠 Naive Bayes Intuition — Tiny Spam Classifier
+    <span class="sub">Day 87 — Naive Bayes, Part 6 · type a message and watch the words vote</span>
+  </h1>
+
+  <div class="math">
+    <b>score(spam)</b> ∝ P(spam) × P(w₁|spam) × P(w₂|spam) × … &nbsp;·&nbsp; <b>score(ham)</b> ∝ P(ham) × P(w₁|ham) × …<br>
+    Word counts use <b>Laplace smoothing (α = 1)</b>: P(w|c) = (count(w,c) + 1) / (totalWords(c) + vocabSize) — so no word ever gets probability zero.
+  </div>
+
+  <div class="card">
+    <h3>Log-scores — taller bar wins</h3>
+    <canvas id="bars" width="640" height="260"></canvas>
+    <h3 style="margin-top:10px">Each word's vote — log-likelihood ratio (positive leans spam)</h3>
+    <div class="wordchips" id="chips"></div>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <label>New message <input type="text" id="msg" value="free money offer click now" maxlength="120"></label>
+      <button id="go">Classify</button>
+    </div>
+    <div class="stats">
+      <div class="stat">log score(spam) <b id="stSpam">–</b></div>
+      <div class="stat">log score(ham) <b id="stHam">–</b></div>
+      <div class="stat winner">Verdict <b id="stVerdict">–</b></div>
+    </div>
+    <div class="train" id="train"></div>
+    <p class="note">The "naive" part is right there in the formula: we multiply the word likelihoods <em>as if</em> every word were independent of the others. Words aren't truly independent ("free" and "money" love to travel together), but the simplification works surprisingly well in practice. Unknown words are skipped — the classifier only judges words it has seen. Try "lets meet for lunch tomorrow" for the ham side.</p>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---- training data: 6 spam + 6 ham ----
+const SPAM = [
+  "win free money now click offer",
+  "claim your prize free cash offer",
+  "urgent money transfer click now",
+  "free offer limited time claim prize",
+  "congratulations you win cash prize",
+  "double your money instant offer click"
+];
+const HAM = [
+  "lets meet for lunch tomorrow",
+  "can you review the report today",
+  "happy birthday have a great day",
+  "the meeting is moved to friday",
+  "please send the slides before lunch",
+  "call me when you reach home"
+];
+
+// ---- pure math: top-level ----
+function tokenize(t) {
+  return t.toLowerCase().replace(/[^a-z ]/g, " ").split(/\s+/).filter(Boolean);
+}
+function trainClassifier(spamDocs, hamDocs, alpha) {
+  const counts = { spam: {}, ham: {} };
+  const totals = { spam: 0, ham: 0 };
+  const vocab = new Set();
+  function feed(docs, cls) {
+    docs.forEach(d => tokenize(d).forEach(w => {
+      vocab.add(w);
+      counts[cls][w] = (counts[cls][w] || 0) + 1;
+      totals[cls]++;
+    }));
+  }
+  feed(spamDocs, "spam"); feed(hamDocs, "ham");
+  const V = vocab.size, nS = spamDocs.length, nH = hamDocs.length;
+  function prob(w, cls) {
+    return ((counts[cls][w] || 0) + alpha) / (totals[cls] + alpha * V);
+  }
+  return { counts, totals, V, nS, nH, prob };
+}
+function scoreMessage(model, msg) {
+  const words = tokenize(msg).filter(w => model.V > 0 && (model.counts.spam[w] !== undefined || model.counts.ham[w] !== undefined));
+  const prior = c => Math.log((c === "spam" ? model.nS : model.nH) / (model.nS + model.nH));
+  function logScore(cls) {
+    let s = prior(cls);
+    words.forEach(w => { s += Math.log(model.prob(w, cls)); });
+    return s;
+  }
+  const ls = logScore("spam"), lh = logScore("ham");
+  const contrib = words.map(w => ({
+    word: w,
+    llr: Math.log(model.prob(w, "spam")) - Math.log(model.prob(w, "ham")),
+    ps: model.prob(w, "spam"), ph: model.prob(w, "ham")
+  })).sort((a, b) => b.llr - a.llr);
+  return { ls, lh, contrib, words };
+}
+
+const model = trainClassifier(SPAM, HAM, 1);
+const cvs = document.getElementById("bars");
+const ctx = cvs.getContext("2d");
+
+function drawBars(ls, lh) {
+  const W = cvs.width, H = cvs.height;
+  ctx.clearRect(0, 0, W, H);
+  const data = [["spam", ls, "#f43f5e"], ["ham", lh, "#4ade80"]];
+  const lo = Math.min(ls, lh), hi = Math.max(ls, lh);
+  const span = hi - lo < 1e-9 ? 1 : hi - lo;
+  const x0 = 120, x1 = W - 40, rh = 44, y0 = 60;
+  ctx.font = "13px system-ui";
+  data.forEach((d, i) => {
+    const y = y0 + i * (rh + 30);
+    ctx.fillStyle = "#94a3b8"; ctx.textAlign = "right";
+    ctx.fillText(d[0], x0 - 12, y + 20);
+    const w = ((d[1] - lo) / span) * (x1 - x0) * 0.92 + 8;
+    const hot = d[1] === Math.max(ls, lh);
+    ctx.fillStyle = d[2]; ctx.globalAlpha = hot ? 1 : 0.45;
+    ctx.fillRect(x0, y, w, rh);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "#e2e8f0"; ctx.textAlign = "left";
+    ctx.font = "bold 14px system-ui";
+    ctx.fillText(d[1].toFixed(2), x0 + w + 10, y + 28);
+    ctx.font = "13px system-ui";
+  });
+  ctx.fillStyle = "#64748b"; ctx.textAlign = "center";
+  ctx.fillText("log-scores: higher (less negative) wins — multiplication of probabilities becomes addition of logs", W / 2, 26);
+}
+
+function classify() {
+  const msg = document.getElementById("msg").value;
+  const r = scoreMessage(model, msg);
+  document.getElementById("stSpam").textContent = r.ls.toFixed(3);
+  document.getElementById("stHam").textContent = r.lh.toFixed(3);
+  document.getElementById("stVerdict").textContent = r.ls > r.lh ? "SPAM 📩🚫" : "HAM ✅";
+  drawBars(r.ls, r.lh);
+  const chips = document.getElementById("chips");
+  chips.innerHTML = "";
+  if (r.contrib.length === 0) {
+    chips.innerHTML = '<span class="chip">no known words — only the priors voted</span>';
+  }
+  r.contrib.forEach(c => {
+    const el = document.createElement("span");
+    el.className = "chip " + (c.llr >= 0 ? "spam" : "ham");
+    el.innerHTML = c.word + " <b>" + (c.llr >= 0 ? "+" : "") + c.llr.toFixed(2) + "</b>";
+    el.title = "P(word|spam)=" + c.ps.toFixed(4) + "  P(word|ham)=" + c.ph.toFixed(4) + " (Laplace-smoothed)";
+    chips.appendChild(el);
+  });
+  // training summary
+  const tr = document.getElementById("train");
+  tr.innerHTML = "<b>Training set</b> — <span class='s'>spam (" + SPAM.length + "):</span> " + SPAM.join(" · ") +
+    "<br><span class='h'>ham (" + HAM.length + "):</span> " + HAM.join(" · ") +
+    "<br>Vocabulary: " + model.V + " words · spam word tokens: " + model.totals.spam + " · ham word tokens: " + model.totals.ham;
+}
+document.getElementById("go").addEventListener("click", classify);
+document.getElementById("msg").addEventListener("keydown", function (e) { if (e.key === "Enter") classify(); });
+classify();
+</script>
+</body>
+</html>

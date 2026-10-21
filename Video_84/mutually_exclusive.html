@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mutually Exclusive vs Independent Events — Day 84</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8; --acc:#38bdf8; --good:#4ade80; --bad:#f43f5e; --warn:#fbbf24; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .math { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:13.5px; line-height:1.9; color:#cbd5e1; margin:12px 0; }
+  .math b { color:var(--acc); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  canvas { width:100%; height:auto; display:block; background:#0b1220; border-radius:8px; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin:8px 0; }
+  label { font-size:13px; color:var(--dim); display:flex; align-items:center; gap:8px; }
+  label output { color:var(--acc); font-weight:700; min-width:52px; }
+  input[type=range] { width:180px; accent-color:var(--acc); }
+  button { background:#0369a1; color:#fff; border:0; border-radius:8px; padding:9px 18px; font-size:14px; cursor:pointer; }
+  button:hover { background:#0284c7; }
+  button.active { background:#0ea5e9; box-shadow:0 0 0 2px var(--acc) inset; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--txt); }
+  .stats { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+  .stat { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:8px 14px; font-size:13px; }
+  .stat b { color:var(--acc); }
+  .stat.zero b { color:var(--bad); }
+  .note { font-size:12.5px; color:var(--dim); margin-top:10px; line-height:1.6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎲 Mutually Exclusive vs Independent Events
+    <span class="sub">Day 84 — Naive Bayes, Part 3 · drag the sliders and watch P(A∩B) and P(A|B) respond</span>
+  </h1>
+
+  <div class="math">
+    <b>Mutually exclusive:</b> P(A∩B) = 0 &nbsp;·&nbsp; P(A|B) = P(A∩B) / P(B) = 0<br>
+    <b>Independent:</b> P(A∩B) = P(A)·P(B) &nbsp;·&nbsp; P(A|B) = P(A)
+  </div>
+
+  <div class="card">
+    <h3>Venn diagram — watch the circles separate or overlap</h3>
+    <canvas id="venn" width="640" height="340"></canvas>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <button id="exclBtn" class="active">Mutually exclusive</button>
+      <button id="indepBtn">Independent</button>
+    </div>
+    <div class="row">
+      <label>P(A) <input type="range" id="pa" min="5" max="95" value="40"><output id="paOut">0.40</output></label>
+      <label>P(B) <input type="range" id="pb" min="5" max="95" value="50"><output id="pbOut">0.50</output></label>
+    </div>
+    <div class="stats">
+      <div class="stat">P(A∩B) <b id="stInter">–</b></div>
+      <div class="stat">P(A|B) <b id="stCond">–</b></div>
+      <div class="stat">Mode <b id="stMode">Mutually exclusive</b></div>
+    </div>
+    <p class="note">When events are mutually exclusive, knowing B happened tells you A did <em>not</em> happen — so P(A|B) = 0 no matter how you move the sliders. For independent events, knowing B happened tells you nothing new about A, so P(A|B) just equals P(A). This contrast (from Video 83) is the probability groundwork Bayes' theorem builds on next.</p>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---- deterministic pseudo-random generator (fixed seed) ----
+let seed = 2026084;
+function rand() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+
+// ---- pure math: top-level so it can be unit-tested ----
+function exclusiveStats(pa, pb) {
+  return { intersection: 0, cond: 0 };
+}
+function independentStats(pa, pb) {
+  return { intersection: pa * pb, cond: pa };
+}
+
+// ---- state ----
+let mode = "exclusive";
+let pa = 0.40, pb = 0.50;
+
+const cvs = document.getElementById("venn");
+const ctx = cvs.getContext("2d");
+
+function currentStats() {
+  return mode === "exclusive" ? exclusiveStats(pa, pb) : independentStats(pa, pb);
+}
+
+function draw() {
+  const W = cvs.width, H = cvs.height;
+  ctx.clearRect(0, 0, W, H);
+  const cx = W / 2, cy = H / 2 - 8, r = 105;
+  const gap = mode === "exclusive" ? r + 34 : r * 0.78; // disjoint vs overlapping
+  const ax = cx - gap, bx = cx + gap;
+
+  // soft glow samples: a few deterministic spark dots for texture
+  ctx.fillStyle = "rgba(148,163,184,0.18)";
+  for (let i = 0; i < 40; i++) {
+    const sx = rand() * W, sy = rand() * H;
+    ctx.beginPath(); ctx.arc(sx, sy, 1.2, 0, 2 * Math.PI); ctx.fill();
+  }
+
+  if (mode === "independent") {
+    // shaded lens (the overlap = the joint probability P(A∩B))
+    ctx.save();
+    ctx.beginPath(); ctx.arc(ax, cy, r, 0, 2 * Math.PI); ctx.clip();
+    ctx.beginPath(); ctx.arc(bx, cy, r, 0, 2 * Math.PI);
+    ctx.fillStyle = "rgba(56,189,248,0.75)"; ctx.fill();
+    ctx.restore();
+  }
+
+  // circle A
+  ctx.beginPath(); ctx.arc(ax, cy, r, 0, 2 * Math.PI);
+  ctx.fillStyle = "rgba(29,78,216,0.45)"; ctx.fill();
+  ctx.strokeStyle = "#38bdf8"; ctx.lineWidth = 3; ctx.stroke();
+  // circle B
+  ctx.beginPath(); ctx.arc(bx, cy, r, 0, 2 * Math.PI);
+  ctx.fillStyle = "rgba(14,165,233,0.35)"; ctx.fill();
+  ctx.strokeStyle = "#4ade80"; ctx.lineWidth = 3; ctx.stroke();
+
+  // labels
+  ctx.fillStyle = "#e2e8f0"; ctx.font = "bold 26px system-ui"; ctx.textAlign = "center";
+  ctx.fillText("A", ax, cy + 9);
+  ctx.fillText("B", bx, cy + 9);
+  ctx.font = "13px system-ui"; ctx.fillStyle = "#94a3b8";
+  if (mode === "exclusive") {
+    ctx.fillStyle = "#f43f5e";
+    ctx.font = "bold 16px system-ui";
+    ctx.fillText("A ∩ B = ∅   →   P(A∩B) = 0", cx, H - 22);
+  } else {
+    ctx.fillStyle = "#4ade80";
+    ctx.font = "bold 16px system-ui";
+    ctx.fillText("overlap exists: P(A∩B) = P(A)·P(B)", cx, H - 22);
+    ctx.font = "13px system-ui"; ctx.fillStyle = "#e2e8f0";
+    ctx.fillText("P(A∩B)", cx, cy + 5);
+  }
+}
+
+function update() {
+  const s = currentStats();
+  document.getElementById("stInter").textContent = s.intersection.toFixed(3);
+  document.getElementById("stCond").textContent = s.cond.toFixed(3);
+  document.getElementById("stMode").textContent = mode === "exclusive" ? "Mutually exclusive" : "Independent";
+  const interEl = document.getElementById("stInter").parentElement;
+  const condEl = document.getElementById("stCond").parentElement;
+  interEl.classList.toggle("zero", s.intersection === 0);
+  condEl.classList.toggle("zero", s.cond === 0);
+  draw();
+}
+
+document.getElementById("exclBtn").addEventListener("click", function () {
+  mode = "exclusive";
+  this.classList.add("active");
+  document.getElementById("indepBtn").classList.remove("active");
+  update();
+});
+document.getElementById("indepBtn").addEventListener("click", function () {
+  mode = "independent";
+  this.classList.add("active");
+  document.getElementById("exclBtn").classList.remove("active");
+  update();
+});
+document.getElementById("pa").addEventListener("input", function () {
+  pa = this.value / 100;
+  document.getElementById("paOut").textContent = pa.toFixed(2);
+  update();
+});
+document.getElementById("pb").addEventListener("input", function () {
+  pb = this.value / 100;
+  document.getElementById("pbOut").textContent = pb.toFixed(2);
+  update();
+});
+
+update();
+</script>
+</body>
+</html>
