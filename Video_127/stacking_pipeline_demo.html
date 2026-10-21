@@ -76,6 +76,281 @@
 <script>
 "use strict";
 
+var STAGE\_W = 980;
+
+var BLEND\_BOXES = [
+  { id:"b\_data",  x:20,  y:20,  w:180, title:"Train data", body:"all labelled rows<br>(features + target)" },
+  { id:"b\_split", x:240, y:20,  w:180, title:"Hold-out split", body:"D<sub>1</sub> (70%) for base models<br>D<sub>2</sub> (30%) for meta model" },
+  { id:"b\_base",  x:460, y:20,  w:200, title:"Base models train on D<sub>1</sub>", body:"Random Forest, GBM,<br>Logistic — diverse learners" },
+  { id:"b\_pred",  x:700, y:20,  w:200, title:"Predict on D<sub>2</sub>", body:"honest <b>out-of-sample</b><br>predictions — never seen" },
+  { id:"b\_meta",  x:240, y:230, w:200, title:"Meta dataset", body:"D<sub>2</sub> predictions +<br>true D<sub>2</sub> labels" },
+  { id:"b\_train", x:500, y:230, w:200, title:"Train meta model", body:"e.g. Logistic Regression<br>learns how to combine" },
+  { id:"b\_infer", x:740, y:230, w:160, title:"Prediction time", body:"new point → base (on D<sub>1</sub>)<br>→ outputs → meta model" }
+];
+var BLEND\_EDGES = [
+  ["b\_data","b\_split"],["b\_split","b\_base"],["b\_base","b\_pred"],
+  ["b\_pred","b\_meta"],["b\_meta","b\_train"],["b\_train","b\_infer"]
+];
+var BLEND\_STEPS = [
+  "We start with the full labelled training set — features plus the target column.",
+  "Blending does a HOLD-OUT split: D\u2081 trains the base models, D\u2082 (unseen by them) trains the meta model. In-sample predictions would be leaky, so D\u2082 must stay hidden from base training.",
+  "The base learners — deliberately DIFFERENT algorithms (Random Forest, GBM, Logistic) — train only on D\u2081. Diversity matters: different errors combine better.",
+  "Each base model predicts on D\u2082, which it never trained on. These are honest out-of-sample predictions — the same situation the models will face at inference.",
+  "Build the meta dataset: for every row of D\u2082, the features are the base models' predictions and the label is D\u2082's TRUE target.",
+  "Train the meta model (often simple, e.g. logistic regression) on that meta dataset. It learns the optimal way to combine the base learners — a learned upgrade over voting.",
+  "At prediction time, a new point flows through the D\u2081-trained base models, their outputs go into the meta model, and the meta model's answer is the final prediction."
+];
+
+var STACK\_BOXES = [
+  { id:"s\_data",  x:20,  y:20,  w:180, title:"Train data", body:"all labelled rows<br>(features + target)" },
+  { id:"s\_fold",  x:240, y:20,  w:200, title:"Split into k = 3 folds", body:"Fold 1 · Fold 2 · Fold 3" },
+  { id:"s\_loop",  x:480, y:20,  w:220, title:"Train base k times", body:"each run holds out ONE fold<br>→ predicts the held-out fold" },
+  { id:"s\_oos",   x:740, y:20,  w:160, title:"Out-of-sample preds", body:"a prediction for EVERY row,<br>from a model that never saw it" },
+  { id:"s\_ret",   x:100, y:230, w:200, title:"Retrain base on FULL data", body:"the k CV copies are<br>discarded for inference" },
+  { id:"s\_meta",  x:360, y:230, w:200, title:"Meta dataset + train meta", body:"OOS predictions + true labels<br>→ train meta model" },
+  { id:"s\_infer", x:620, y:230, w:220, title:"Prediction time", body:"new point → full-trained base<br>→ outputs → meta model" }
+];
+var STACK\_EDGES = [
+  ["s\_data","s\_fold"],["s\_fold","s\_loop"],["s\_loop","s\_oos"],
+  ["s\_oos","s\_meta"],["s\_data","s\_ret"],["s\_ret","s\_infer"],["s\_meta","s\_infer"]
+];
+var STACK\_STEPS = [
+  "We start with the full labelled training set — same goal: honest out-of-sample predictions for the meta model.",
+  "Stacking splits the data into k folds (here k = 3). Unlike blending, NOTHING is sacrificed to a hold-out set.",
+  "Each base model trains k times: every run trains on k\u22121 folds and predicts the ONE fold it held out. That is k times the compute — the price of using all the data.",
+  "Stack the held-out predictions: every single row now has a prediction from a model that never saw it. Zero leakage, zero wasted rows for the meta dataset.",
+  "For DEPLOYMENT, retrain each base model once on the FULL training data — the k cross-validation copies are thrown away, the meta model is kept.",
+  "The meta dataset pairs each row's out-of-sample predictions with its true label; the meta model trains on it and learns the best combination.",
+  "At prediction time, the new point goes through the full-data base models, their outputs flow into the meta model, and out comes the stacked prediction."
+];
+
+var mode = "blend";
+var boxes = [], edges = [], steps = [];
+var timer = null, stepIdx = -1;
+
+function cx(b){ return b.x + b.w/2; }
+function cy(b){ return b.y + 45; }
+
+function loadMode(m){
+  stopPlay();
+  mode = m;
+  document.getElementById("btnBlend").className = m==="blend" ? "active" : "";
+  document.getElementById("btnStack").className = m==="stack" ? "active" : "";
+  boxes = m==="blend" ? BLEND\_BOXES : STACK\_BOXES;
+  edges = m==="blend" ? BLEND\_EDGES : STACK\_EDGES;
+  steps = m==="blend" ? BLEND\_STEPS : STACK\_STEPS;
+  renderStage();
+  setCaption("Ready.", "Press <b>Play steps</b> to animate the " + (m==="blend"?"blending":"stacking") + " pipeline.");
+  document.getElementById("progress").textContent = "";
+}
+
+function renderStage(){
+  var stage = document.getElementById("stage");
+  var svg = document.getElementById("arrows");
+  svg.innerHTML = "";
+  var old = stage.querySelectorAll(".box");
+  for (var i=0;i<old.length;i++) old[i].remove();
+
+  var byId = {};
+  boxes.forEach(function(b){ byId[b.id]=b; });
+
+  edges.forEach(function(e, i){
+    var a = byId[e[0]], c = byId[e[1]];
+    var x1 = cx(a), y1 = cy(a), x2 = cx(c), y2 = cy(c);
+    var wrap = Math.abs(x2-x1) > 160 && Math.abs(y2-y1) > 60;
+    var g = document.createElementNS("http://www.w3.org/2000/svg","g");
+    g.setAttribute("class","edge"); g.setAttribute("data-edge", i);
+    if (wrap) {
+      var mx = (x1+x2)/2;
+      var path = document.createElementNS("http://www.w3.org/2000/svg","path");
+      path.setAttribute("d","M"+x1+","+y1+" C"+x1+","+(y1+110)+" "+x2+","+(y2-110)+" "+x2+","+y2);
+      path.setAttribute("fill","none"); path.setAttribute("stroke","#334155");
+      path.setAttribute("stroke-width","2.5");
+      path.setAttribute("class","edgepath");
+      g.appendChild(path);
+      var poly = document.createElementNS("http://www.w3.org/2000/svg","polygon");
+      poly.setAttribute("points", x2+","+(y2-8)+" "+(x2-6)+","+(y2-20)+" "+(x2+6)+","+(y2-20));
+      poly.setAttribute("class","edgehead");
+      g.appendChild(poly);
+    } else {
+      var line = document.createElementNS("http://www.w3.org/2000/svg","line");
+      line.setAttribute("x1",x1); line.setAttribute("y1",y1);
+      line.setAttribute("x2",x2); line.setAttribute("y2",y2);
+      line.setAttribute("class","edgeline");
+      g.appendChild(line);
+      var ang = Math.atan2(y2-y1, x2-x1);
+      var px = x2 - 16*Math.cos(ang), py = y2 - 16*Math.sin(ang);
+      var p1 = (px+8*Math.cos(ang)).toFixed(1)+","+(py+8*Math.sin(ang)).toFixed(1);
+      var p2 = (px+7*Math.cos(ang+2.5)).toFixed(1)+","+(py+7*Math.sin(ang+2.5)).toFixed(1);
+      var p3 = (px+7*Math.cos(ang-2.5)).toFixed(1)+","+(py+7*Math.sin(ang-2.5)).toFixed(1);
+      var poly2 = document.createElementNS("http://www.w3.org/2000/svg","polygon");
+      poly2.setAttribute("points", p1+" "+p2+" "+p3);
+      poly2.setAttribute("class","edgehead");
+      g.appendChild(poly2);
+    }
+    svg.appendChild(g);
+  });
+
+  boxes.forEach(function(b){
+    var d = document.createElement("div");
+    d.className = "box"; d.id = "box\_"+b.id;
+    d.style.left = b.x+"px"; d.style.top = b.y+"px"; d.style.width = b.w+"px";
+    d.innerHTML = "<b>"+b.title+"</b>"+b.body;
+    stage.appendChild(d);
+  });
+}
+
+function setCaption(no, text){
+  document.getElementById("caption").innerHTML = '<span class="stepno">'+no+'</span>'+text;
+  document.getElementById("progress").textContent =
+    stepIdx>=0 ? "Step "+(stepIdx+1)+" of "+steps.length : "";
+}
+
+function stopPlay(){
+  if (timer) { clearTimeout(timer); timer = null; }
+  document.getElementById("playBtn").disabled = false;
+}
+
+function lightBox(id, cls){
+  var el = document.getElementById("box\_"+id);
+  if (el) el.className = "box " + cls;
+}
+
+function lightEdgesFor(boxId, upto){
+  var edgeEls = document.querySelectorAll("#arrows g.edge");
+  edges.forEach(function(e, i){
+    var g = edgeEls[i]; if (!g) return;
+    var lines = g.querySelectorAll("line,path");
+    var polys = g.querySelectorAll("polygon");
+    var on = e[1]===boxId;
+    lines.forEach(function(l){ l.classList.toggle("lit", on); if(l.tagName==="path"){ l.setAttribute("stroke", on?"#fbbf24":"#334155"); }});
+    polys.forEach(function(p){ p.classList.toggle("lit", on); });
+  });
+}
+
+function orderOfBoxes(){
+  var seen = {}, order = [];
+  function visit(id){
+    if (seen[id]) return; seen[id]=1; order.push(id);
+  }
+  edges.forEach(function(e){ visit(e[0]); visit(e[1]); });
+  boxes.forEach(function(b){ visit(b.id); });
+  return order;
+}
+
+function play(){
+  if (timer) return;
+  boxes.forEach(function(b){ lightBox(b.id,""); });
+  document.getElementById("playBtn").disabled = true;
+  stepIdx = -1;
+  var order = orderOfBoxes();
+  var done = {};
+  function next(){
+    stepIdx++;
+    if (stepIdx >= steps.length) {
+      boxes.forEach(function(b){ lightBox(b.id,"done"); });
+      setCaption("Done.", (mode==="blend"?"Blending":"Stacking")+" pipeline complete — the meta model now combines honest base predictions.");
+      document.getElementById("playBtn").disabled = false;
+      timer = null; return;
+    }
+    var id = order[Math.min(stepIdx, order.length-1)];
+    lightEdgesFor(id);
+    boxes.forEach(function(b){
+      if (done[b.id]) lightBox(b.id,"done");
+      else lightBox(b.id, b.id===id ? "active" : "");
+    });
+    done[id]=1;
+    setCaption("Step "+(stepIdx+1)+"/"+steps.length+":", steps[stepIdx]);
+    timer = setTimeout(next, 2600);
+  }
+  next();
+}
+
+document.getElementById("btnBlend").addEventListener("click", function(){ loadMode("blend"); });
+document.getElementById("btnStack").addEventListener("click", function(){ loadMode("stack"); });
+document.getElementById("playBtn").addEventListener("click", play);
+loadMode("blend");
+</script>
+</body>
+</html>
+](https://itty.bitty.site/#Stacking-vs-Blending-Ensemble-Pipeline-Animation/data:text/html;charset=utf-8,<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stacking vs Blending — Ensemble Pipeline Animation</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px 16px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 22px; color: #fff; margin: 0 0 6px; }
+  p.sub { color: #94a3b8; margin: 0 0 18px; font-size: 14px; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+  .seg { display: inline-flex; border: 1px solid #334155; border-radius: 10px; overflow: hidden; }
+  .seg button {
+    background: #1e293b; color: #cbd5e1; border: none; padding: 10px 16px;
+    font-size: 14px; cursor: pointer;
+  }
+  .seg button.active { background: #2563eb; color: #fff; font-weight: 600; }
+  #playBtn {
+    background: #16a34a; color: #fff; border: none; border-radius: 10px;
+    padding: 10px 20px; font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+  #playBtn:disabled { background: #475569; cursor: default; }
+  #stage {
+    position: relative; height: 420px; background: #111c33; border: 1px solid #1e3a5f;
+    border-radius: 14px; overflow: hidden; margin-bottom: 12px;
+  }
+  .box {
+    position: absolute; border: 2px solid #475569; background: #1e293b; border-radius: 10px;
+    padding: 8px 10px; font-size: 12.5px; text-align: center; color: #cbd5e1;
+    transition: all 0.45s ease; opacity: 0.35; min-width: 130px; line-height: 1.35;
+  }
+  .box b { color: #fff; display: block; font-size: 13px; margin-bottom: 2px; }
+  .box.active {
+    border-color: #fbbf24; background: #45350a; color: #fff; opacity: 1;
+    box-shadow: 0 0 18px rgba(251,191,36,.55); transform: scale(1.07); z-index: 5;
+  }
+  .box.done { border-color: #22c55e; opacity: 1; }
+  .box.done b { color: #bbf7d0; }
+  svg#arrows { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  svg#arrows line { stroke: #334155; stroke-width: 2.5; transition: stroke .45s; }
+  svg#arrows line.lit { stroke: #fbbf24; }
+  svg#arrows polygon { fill: #334155; transition: fill .45s; }
+  svg#arrows polygon.lit { fill: #fbbf24; }
+  #caption {
+    min-height: 54px; background: #1e293b; border-left: 4px solid #2563eb; border-radius: 8px;
+    padding: 10px 14px; font-size: 14px; color: #e2e8f0;
+  }
+  #caption .stepno { color: #60a5fa; font-weight: 700; margin-right: 6px; }
+  #progress { color: #64748b; font-size: 12px; margin-top: 8px; }
+  .note { color: #64748b; font-size: 12px; margin-top: 10px; }
+  kbd { background:#1e293b; border:1px solid #475569; border-radius:4px; padding:1px 6px; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Stacking vs Blending — Ensemble Pipeline Animation</h1>
+  <p class="sub">Day 127 · Stacking and Blending Ensembles. Press <b>Play steps</b> to walk through each pipeline. Both methods solve the same leakage problem: the meta model must train on <i>out-of-sample</i> predictions.</p>
+  <div class="controls">
+    <div class="seg">
+      <button id="btnBlend" class="active">Blending (hold-out)</button>
+      <button id="btnStack">Stacking (k-fold)</button>
+    </div>
+    <button id="playBtn">▶ Play steps</button>
+  </div>
+  <div id="stage"><svg id="arrows"></svg></div>
+  <div id="caption"><span class="stepno">Ready.</span> Pick a mode, then press Play steps.</div>
+  <div id="progress"></div>
+  <p class="note">Tip: the steps also animate the danger they fix — training the meta model on in-sample predictions lets base models "cheat" and the meta model overfits.</p>
+</div>
+
+<script>
+"use strict";
+
 var STAGE_W = 980;
 
 var BLEND_BOXES = [

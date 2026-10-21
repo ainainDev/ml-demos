@@ -103,6 +103,225 @@ function drawSig(z) {
   const X = v => x0 + (v + 5) / 10 * (x1 - x0);
   const Y = p => y1 - p * (y1 - y0);
   ctx.strokeStyle = "#334155"; ctx.lineWidth = 1;
+  for (let z\_ = -5; z\_ <= 5; z\_++) { ctx.beginPath(); ctx.moveTo(X(z\_), y0); ctx.lineTo(X(z\_), y1); ctx.stroke(); }
+  for (let p = 0; p <= 1.001; p += 0.25) { ctx.beginPath(); ctx.moveTo(x0, Y(p)); ctx.lineTo(x1, Y(p)); ctx.stroke(); }
+  ctx.fillStyle = "#94a3b8"; ctx.font = "11px system-ui";
+  for (let z\_ = -5; z\_ <= 5; z\_ += 5) ctx.fillText(z\_ > 0 ? "+" + z\_ : z\_, X(z\_) - 8, H - 12);
+  ctx.fillText("p", 8, Y(1) + 4); ctx.fillText("z", X(5) - 4, H - 12);
+  // curve
+  ctx.strokeStyle = "#38bdf8"; ctx.lineWidth = 2.5; ctx.beginPath();
+  for (let i = 0; i <= 400; i++) { const zz = -5 + 10 * i / 400; const px = X(zz), py = Y(sig(zz)); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+  ctx.stroke();
+  // video reference point (base model)
+  ctx.setLineDash([5, 4]); ctx.strokeStyle = "#fbbf24"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(X(Z0), Y(P0), 7, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = "#fbbf24"; ctx.fillText("base: z=0.405, p=0.6", X(Z0) + 10, Y(P0) - 8);
+  // current point
+  const p = sig(z);
+  ctx.setLineDash([4, 4]); ctx.strokeStyle = "#4ade80"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(X(z), Y(p)); ctx.lineTo(X(z), y1); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(X(z), Y(p)); ctx.lineTo(x0, Y(p)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = "#4ade80"; ctx.beginPath(); ctx.arc(X(z), Y(p), 6, 0, 7); ctx.fill();
+  ctx.fillStyle = "#e2e8f0"; ctx.fillText("z=" + z.toFixed(2) + ", p=" + p.toFixed(3), Math.min(X(z) + 10, W - 120), Y(p) + 18);
+}
+const zSlider = document.getElementById("z");
+function updZ() {
+  const z = parseFloat(zSlider.value);
+  document.getElementById("zv").textContent = z.toFixed(3);
+  document.getElementById("pv").textContent = sig(z).toFixed(3);
+  drawSig(z);
+}
+zSlider.addEventListener("input", updZ);
+
+// ---------- panel 2: student table ----------
+(function () {
+  let h = "<tr><th>#</th><th>CGPA*</th><th>y (placed)</th><th>p</th><th>residual r = y &minus; p</th></tr>";
+  students.forEach((s, i) => {
+    const r = s.y - P0;
+    h += "<tr><td>" + (i + 1) + "</td><td>" + s.cgpa.toFixed(1) + "</td><td>" + s.y + "</td><td>" + P0.toFixed(1) +
+         "</td><td>" + (r > 0 ? "+" : "") + r.toFixed(1) + "</td></tr>";
+  });
+  document.getElementById("stud").innerHTML = h;
+})();
+
+// ---------- panel 3: split explorer ----------
+function splitStats(s) {
+  const L = students.filter(x => x.cgpa < s), R = students.filter(x => x.cgpa >= s);
+  const rL = L.map(x => x.y - P0), rR = R.map(x => x.y - P0);
+  const sum = a => a.reduce((t, v) => t + v, 0);
+  const ss = r => { const t = sum(r); return t * t / (r.length * P0 * (1 - P0)); }; // lambda = 0
+  const ssL = ss(rL), ssR = ss(rR), ssRoot = ss(students.map(x => x.y - P0));
+  const leaf = r => sum(r) / (r.length * P0 * (1 - P0));
+  return { L, R, rL, rR, ssL, ssR, ssRoot, gain: ssL + ssR - ssRoot,
+           leafL: trunc2(leaf(rL)), leafR: trunc2(leaf(rR)), sumL: sum(rL), sumR: sum(rR) };
+}
+function gains() { return SPLITS.map(s => ({ s, g: splitStats(s).gain })); }
+function renderSplits() {
+  const box = document.getElementById("sbtns"); box.innerHTML = "";
+  const gs = gains(), best = gs.reduce((a, b) => b.g > a.g ? b : a).s;
+  SPLITS.forEach(s => {
+    const b = document.createElement("button");
+    b.textContent = s.toFixed(2);
+    if (s === selSplit) b.classList.add("sel");
+    if (s === best) b.classList.add("best");
+    b.onclick = () => { selSplit = s; renderSplits(); };
+    box.appendChild(b);
+  });
+  const st = splitStats(selSplit);
+  const f = v => v.toFixed(2);   // rounded display; leaf outputs keep video-style truncation
+  document.getElementById("splitcalc").innerHTML =
+    'Split at CGPA = <span class="v">' + selSplit.toFixed(2) + "</span><br>" +
+    '<span class="k">left rows (CGPA &lt; ' + selSplit.toFixed(2) + "):</span> " + st.L.map(x => x.cgpa.toFixed(1) + "(y=" + x.y + ")").join(", ") +
+    "<br><span class=\"k\">right rows:</span> " + st.R.map(x => x.cgpa.toFixed(1) + "(y=" + x.y + ")").join(", ") +
+    "<br><span class=\"k\">SS\_left = (&sum;r)<sup>2</sup>/&sum;p(1&minus;p) = (" + st.sumL.toFixed(1) + ")<sup>2</sup>/" +
+    (st.rL.length * 0.24).toFixed(2) + " = </span><span class=\"v\">" + f(st.ssL) + "</span>" +
+    "<br><span class=\"k\">SS\_right = (" + st.sumR.toFixed(1) + ")<sup>2</sup>/" + (st.rR.length * 0.24).toFixed(2) +
+    " = </span><span class=\"v\">" + f(st.ssR) + "</span>" +
+    "<br><span class=\"k\">SS\_root = (0.0)<sup>2</sup>/1.20 = </span><span class=\"v\">" + f(st.ssRoot) + "</span>" +
+    "<br><span class=\"k\">Gain = " + f(st.ssL) + " + " + f(st.ssR) + " &minus; " + f(st.ssRoot) + " = </span><span class=\"v\">" + f(st.gain) + "</span>" +
+    (selSplit === best ? ' <span class="warn"> &larr; highest gain &rarr; root split</span>' : "") +
+    "<br><span class=\"k\">leaf outputs (&sum;r / &sum;p(1&minus;p)):</span> <span class=\"v\">" +
+    (st.leafL > 0 ? "+" : "") + st.leafL.toFixed(2) + " / " + (st.leafR > 0 ? "+" : "") + st.leafR.toFixed(2) + "</span>";
+}
+renderSplits();
+
+// ---------- panel 4: eta update ----------
+const etaSlider = document.getElementById("eta");
+function updEta() {
+  const e = parseFloat(etaSlider.value);
+  document.getElementById("etav").textContent = e.toFixed(2);
+  const st = splitStats(selSplit);
+  const zL = Z0 + e * st.leafL, zR = Z0 + e * st.leafR;
+  const pL = sig(zL), pR = sig(zR);
+  let h = "Leaf outputs (from split " + selSplit.toFixed(2) + "): <span class=\"v\">" +
+    (st.leafL > 0 ? "+" : "") + st.leafL.toFixed(2) + " / " + (st.leafR > 0 ? "+" : "") + st.leafR.toFixed(2) + "</span><br>" +
+    "<span class=\"k\">z\_new = z\_old + &eta; &times; output</span><br>" +
+    "left&nbsp;&nbsp;: z = 0.405 + " + e.toFixed(2) + " &times; (" + st.leafL.toFixed(2) + ") = <span class=\"v\">" +
+    zL.toFixed(3) + "</span> &rarr; p = <span class=\"v\">" + pL.toFixed(3) + "</span><br>" +
+    "right: z = 0.405 + " + e.toFixed(2) + " &times; (" + st.leafR.toFixed(2) + ") = <span class=\"v\">" +
+    zR.toFixed(3) + "</span> &rarr; p = <span class=\"v\">" + pR.toFixed(3) + "</span><br>" +
+    "<span class=\"k\">new residuals y &minus; p:</span> " + students.map(s => {
+      const pp = s.cgpa < selSplit ? pL : pR, r = s.y - pp;
+      return s.cgpa.toFixed(1) + ": " + (r > 0 ? "+" : "") + r.toFixed(3);
+    }).join(" &nbsp;|&nbsp; ");
+  document.getElementById("stage2").innerHTML = h;
+}
+etaSlider.addEventListener("input", updEta);
+// keep panel 4 in sync when the split changes
+const \_renderSplits = renderSplits;
+renderSplits = function () { \_renderSplits(); updEta(); };
+renderSplits();
+
+updZ();
+window.addEventListener("resize", () => drawSig(parseFloat(zSlider.value)));
+</script>
+</body>
+</html>
+](https://itty.bitty.site/#XGBoost-Classification-Log-Odds-Sigmoid-Explorer/data:text/html;charset=utf-8,<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XGBoost Classification — Log-Odds &harr; Sigmoid Explorer (Day 125)</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --mut:#94a3b8; --acc:#38bdf8; --grn:#4ade80; --red:#f87171; --amb:#fbbf24; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; padding:18px; }
+  h1 { font-size:1.35rem; margin:0 0 4px; }
+  .sub { color:var(--mut); font-size:.9rem; margin-bottom:16px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:900px){ .grid{grid-template-columns:1fr;} }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .card h2 { font-size:1.05rem; margin:0 0 10px; color:var(--acc); }
+  canvas { width:100%; height:280px; display:block; background:#0b1220; border:1px solid var(--line); border-radius:8px; }
+  .row { display:flex; align-items:center; gap:10px; margin:10px 0; flex-wrap:wrap; }
+  input[type=range]{ flex:1; min-width:180px; accent-color:var(--acc); }
+  .val { font-family:ui-monospace,Menlo,monospace; background:#0b1220; border:1px solid var(--line); border-radius:6px; padding:4px 10px; }
+  .big { font-size:1.25rem; font-weight:700; color:var(--grn); font-family:ui-monospace,Menlo,monospace; }
+  table { width:100%; border-collapse:collapse; font-size:.88rem; margin-top:8px; }
+  th,td { border:1px solid var(--line); padding:6px 8px; text-align:center; }
+  th { background:#0b1220; color:var(--acc); }
+  .note { color:var(--mut); font-size:.82rem; margin-top:10px; line-height:1.5; }
+  .splitbtns { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
+  .splitbtns button { background:#0b1220; color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:8px 14px; cursor:pointer; font-family:ui-monospace,Menlo,monospace; font-size:.9rem; }
+  .splitbtns button.sel { border-color:var(--acc); background:#0c2a3f; box-shadow:0 0 0 1px var(--acc); }
+  .splitbtns button.best::after { content:" ★"; color:var(--amb); }
+  .formula { font-family:ui-monospace,Menlo,monospace; background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin:8px 0; font-size:.9rem; line-height:1.9; }
+  .k { color:var(--mut); } .v { color:var(--grn); font-weight:700; }
+  .warn { color:var(--amb); }
+</style>
+</head>
+<body>
+<h1>XGBoost for Classification — Log-Odds &harr; Sigmoid Explorer</h1>
+<div class="sub">Day 125 · CampusX · worked example: 5 students, CGPA &rarr; placement (0/1). All numbers computed live from the video's formulas.</div>
+
+<div class="grid">
+  <!-- PANEL 1 -->
+  <div class="card">
+    <h2>1 · Log-odds &harr; Probability (sigmoid)</h2>
+    <canvas id="sig"></canvas>
+    <div class="row">
+      <label for="z">log-odds z</label>
+      <input type="range" id="z" min="-5" max="5" step="0.01" value="0.405">
+      <span class="val" id="zv">0.405</span>
+    </div>
+    <div class="row">p = e<sup>z</sup> / (1 + e<sup>z</sup>) = <span class="big" id="pv">0.600</span></div>
+    <div class="note">The video's base model: 3 of 5 students placed, so z = log(3/2) &asymp; 0.405 &rarr; p = 0.6 (dashed marker). Modelling happens in log-odds space; predictions are converted to probabilities with the sigmoid.</div>
+  </div>
+
+  <!-- PANEL 2 -->
+  <div class="card">
+    <h2>2 · The 5 students &mdash; base residuals</h2>
+    <table id="stud"></table>
+    <div class="note">CGPA values are <b>illustrative</b> (the video only shows split midpoints). Labels: 3 placed / 2 unplaced &rarr; base p = 0.6 for every row. Residual r = y &minus; p.</div>
+  </div>
+
+  <!-- PANEL 3 -->
+  <div class="card">
+    <h2>3 · Candidate-split explorer (similarity score &amp; gain)</h2>
+    <div class="splitbtns" id="sbtns"></div>
+    <div class="formula" id="splitcalc"></div>
+    <div class="note">SS = (&sum; r)<sup>2</sup> / (&sum; p(1&minus;p) + &lambda;), &lambda; = 0 here. Gain = SS<sub>left</sub> + SS<sub>right</sub> &minus; SS<sub>root</sub>. The best split becomes the root of the tree.</div>
+  </div>
+
+  <!-- PANEL 4 -->
+  <div class="card">
+    <h2>4 · Learning-rate update &rarr; stage-2 predictions</h2>
+    <div class="row">
+      <label for="eta">&eta; (eta)</label>
+      <input type="range" id="eta" min="0.01" max="1" step="0.01" value="0.3">
+      <span class="val" id="etav">0.30</span>
+    </div>
+    <div class="formula" id="stage2"></div>
+    <div class="note">z<sub>new</sub> = z<sub>old</sub> + &eta; &times; leaf output. Residuals shrink toward 0, so the next tree fits a smaller error &mdash; trees m3, m4, &hellip; repeat the loop.</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---------- data (from the video; CGPAs illustrative) ----------
+const students = [
+  {cgpa: 5.6, y: 0}, {cgpa: 6.3, y: 1}, {cgpa: 7.1, y: 0},
+  {cgpa: 8.1, y: 1}, {cgpa: 9.6, y: 1}
+];
+const P0 = 0.6;
+const trunc2 = v => Math.trunc(v * 100) / 100;
+const Z0 = Math.round(Math.log(P0 / (1 - P0)) * 1000) / 1000;  // 0.405, as in the video
+const SPLITS = [5.97, 6.67, 7.62, 8.87];
+let selSplit = 7.62;
+
+// ---------- panel 1: sigmoid canvas ----------
+const cv = document.getElementById("sig"), ctx = cv.getContext("2d");
+const sig = z => 1 / (1 + Math.exp(-z));
+function drawSig(z) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const pad = 34, x0 = pad, x1 = W - pad, y0 = pad, y1 = H - pad;
+  const X = v => x0 + (v + 5) / 10 * (x1 - x0);
+  const Y = p => y1 - p * (y1 - y0);
+  ctx.strokeStyle = "#334155"; ctx.lineWidth = 1;
   for (let z_ = -5; z_ <= 5; z_++) { ctx.beginPath(); ctx.moveTo(X(z_), y0); ctx.lineTo(X(z_), y1); ctx.stroke(); }
   for (let p = 0; p <= 1.001; p += 0.25) { ctx.beginPath(); ctx.moveTo(x0, Y(p)); ctx.lineTo(x1, Y(p)); ctx.stroke(); }
   ctx.fillStyle = "#94a3b8"; ctx.font = "11px system-ui";
