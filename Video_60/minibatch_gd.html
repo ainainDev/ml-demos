@@ -156,3 +156,161 @@ reset();
 </script>
 </body>
 </html>
+](https://itty.bitty.site/#Mini-batch-GD-playground/data:text/html;charset=utf-8,<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mini-batch gradient descent playground — Day 52</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 820px; margin: 24px auto; padding: 0 16px; line-height: 1.5; }
+  h2 { margin-bottom: 4px; } .sub { color: #64748b; margin-top: 0; }
+  .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; margin: 14px 0; }
+  button { font-size: 15px; padding: 10px 18px; border-radius: 10px; border: none;
+           background: #2563eb; color: #fff; cursor: pointer; margin-right: 8px; margin-bottom: 6px; }
+  button.ghost { background: #e2e8f0; color: #0f172a; }
+  canvas { width: 100%; border: 1px solid #e2e8f0; border-radius: 10px; }
+  #bowl { height: 340px; }
+  .ctl { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  input[type=range] { width: 220px; }
+  .note { font-size: 13px; color: #64748b; }
+  .verdict { font-size: 15px; background: #f1f5f9; border-radius: 10px; padding: 10px 14px; margin: 8px 0; }
+  code { background: #f1f5f9; padding: 1px 5px; border-radius: 5px; }
+  .mono { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<h2>🌀 Mini-batch gradient descent playground</h2>
+<p class="sub">The loss is an elongated bowl: L = b² + 10·m². Descent uses a fixed learning rate, but the <b>gradient noise</b> shrinks as the batch grows — that is what morphs the path. Batch size 1 = pure SGD (noisy); 50 rows = full batch GD (smooth).</p>
+
+<div class="card">
+  <b>Controls</b>
+  <div class="ctl">
+    <label>Batch size <input type="range" id="bs" min="1" max="50" step="1" value="8"></label><b id="bsv">8</b>
+  </div>
+  <div class="ctl">
+    <button id="play">▶ Play descent</button>
+    <button id="pause" class="ghost">⏸ Pause</button>
+    <button id="reset" class="ghost">↺ Reset</button>
+  </div>
+  <div class="ctl">
+    <button class="ghost preset" data-bs="1">🧨 batch = 1 (SGD)</button>
+    <button class="ghost preset" data-bs="8">🎯 batch = 8 (mini-batch)</button>
+    <button class="ghost preset" data-bs="50">🛤️ batch = 50 (batch GD)</button>
+  </div>
+  <div class="verdict">
+    Regime: <b id="regime">mini-batch</b> &nbsp;·&nbsp; updates/epoch = <b id="upe">—</b>
+    &nbsp;·&nbsp; steps: <b id="step">0</b> &nbsp;·&nbsp; L = <b id="lv">—</b>
+  </div>
+  <p class="note">n = 50 rows. Updates per epoch = n ÷ batch size. Noise on each gradient step scales as
+  <span class="mono">σ ∝ (1 − batch/n)</span> — full batch has zero noise, single rows have the most.</p>
+</div>
+
+<div class="card">
+  <b>The descent on the bowl</b>
+  <p class="note"><span style="color:#2563eb">●</span> path trail &nbsp;·&nbsp;
+  <span style="color:#dc2626">●</span> current point &nbsp;·&nbsp; contours = equal-loss lines</p>
+  <canvas id="bowl" width="780" height="340"></canvas>
+</div>
+
+<script>
+const N = 50, LR = 0.08, STEPS = 220;
+const L = (b, m) => b * b + 10 * m * m;
+const g = (b, m) => [2 * b, 20 * m];
+
+let path, step, timer = null;
+
+const cvs = document.getElementById('bowl'), cx = cvs.getContext('2d');
+const W = cvs.width, H = cvs.height;
+const X0 = 3.6; // half-width of the view in parameter units
+function px(b) { return W / 2 + (b / X0) * (W / 2 - 24); }
+function py(m) { return H / 2 - (m / X0) * (H / 2 - 24); }
+
+function gauss() { // standard normal via Box-Muller
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+function draw() {
+  cx.clearRect(0, 0, W, H);
+  // contours
+  cx.strokeStyle = '#cbd5e1'; cx.lineWidth = 1;
+  for (let lv = 4; lv <= 140; lv += 9) {
+    cx.beginPath();
+    for (let t = 0; t <= 200; t++) {
+      const a = t / 200 * 2 * Math.PI;
+      const r = Math.sqrt(lv);
+      const b = r * Math.cos(a), m = r * Math.sin(a) / Math.sqrt(10);
+      const X = px(b), Y = py(m);
+      if (t === 0) cx.moveTo(X, Y); else cx.lineTo(X, Y);
+    }
+    cx.stroke();
+  }
+  // optimum
+  cx.fillStyle = '#fbbf24';
+  cx.beginPath(); cx.arc(px(0), py(0), 7, 0, 7); cx.fill();
+  cx.fillStyle = '#b45309'; cx.font = 'bold 12px system-ui';
+  cx.fillText('minimum', px(0) + 12, py(0) + 4);
+  // trail
+  cx.strokeStyle = '#2563eb'; cx.lineWidth = 2.5;
+  cx.beginPath();
+  path.forEach((p, i) => { const X = px(p[0]), Y = py(p[1]);
+    if (i === 0) cx.moveTo(X, Y); else cx.lineTo(X, Y); });
+  cx.stroke();
+  // current point
+  const cur = path[path.length - 1];
+  cx.fillStyle = '#dc2626';
+  cx.beginPath(); cx.arc(px(cur[0]), py(cur[1]), 6, 0, 7); cx.fill();
+}
+
+function regime(bs) {
+  if (bs === 1) return 'stochastic (SGD)';
+  if (bs === N) return 'batch GD';
+  return 'mini-batch';
+}
+
+function tick() {
+  if (step >= STEPS) { stop(); return; }
+  const bs = parseInt(document.getElementById('bs').value, 10);
+  const sigma = 1.6 * (1 - bs / N);   // noise shrinks with batch size
+  const [b, m] = path[path.length - 1];
+  const [gb, gm] = g(b, m);
+  path.push([b - LR * (gb + gauss() * sigma), m - LR * (gm + gauss() * sigma)]);
+  step++;
+  document.getElementById('step').textContent = step;
+  document.getElementById('lv').textContent = L(b, m).toFixed(2);
+  draw();
+}
+
+function sync() {
+  const bs = parseInt(document.getElementById('bs').value, 10);
+  document.getElementById('bsv').textContent = bs;
+  document.getElementById('regime').textContent = regime(bs);
+  document.getElementById('upe').textContent = (N / bs).toFixed(1);
+}
+
+function reset() {
+  stop();
+  path = [[-3.0, 2.6]]; step = 0;
+  document.getElementById('step').textContent = '0';
+  document.getElementById('lv').textContent = L(-3.0, 2.6).toFixed(2);
+  sync(); draw();
+}
+
+function stop() { if (timer) { clearInterval(timer); timer = null; } }
+
+document.getElementById('play').onclick = () => { stop(); timer = setInterval(tick, 25); };
+document.getElementById('pause').onclick = stop;
+document.getElementById('reset').onclick = reset;
+document.getElementById('bs').oninput = () => { sync(); reset(); };
+document.querySelectorAll('.preset').forEach(el => {
+  el.onclick = () => { document.getElementById('bs').value = el.dataset.bs; sync(); reset(); };
+});
+
+reset();
+</script>
+</body>
+</html>

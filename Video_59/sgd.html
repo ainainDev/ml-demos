@@ -173,3 +173,178 @@
 </script>
 </body>
 </html>
+](https://itty.bitty.site/#SGD-playground/data:text/html;charset=utf-8,<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stochastic Gradient Descent — Noisy Loss Bowl</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background:#0f172a; color:#f1f5f9; }
+  h1 { text-align:center; margin:18px 0 4px; font-size:22px; }
+  .sub { text-align:center; color:#94a3b8; margin:0 12px 14px; font-size:14px; }
+  .sub b { color:#f59e0b; }
+  .wrap { display:flex; flex-wrap:wrap; gap:16px; justify-content:center;
+          padding:0 16px 24px; }
+  canvas { background:#0f172a; border:1px solid #334155; border-radius:10px;
+           max-width:100%; height:auto; }
+  .panel { width:290px; background:#1e293b; border:1px solid #334155;
+           border-radius:10px; padding:16px; }
+  .panel label { display:block; margin-bottom:12px; font-size:14px; color:#cbd5e1; }
+  .panel label span { float:right; color:#f59e0b; font-weight:bold; }
+  .panel input[type=range] { width:100%; margin-top:6px; accent-color:#f59e0b; }
+  .chk { display:flex; align-items:center; gap:8px; margin:8px 0; font-size:13.5px; color:#cbd5e1; }
+  .chk input { width:16px; height:16px; accent-color:#38bdf8; }
+  .legend { font-size:12.5px; color:#94a3b8; margin:8px 0; line-height:1.8; }
+  .sw { display:inline-block; width:22px; height:4px; border-radius:2px; vertical-align:middle; margin-right:6px; }
+  .btns { display:flex; gap:8px; margin:10px 0 12px; }
+  button { flex:1; padding:9px 6px; border:none; border-radius:8px; cursor:pointer;
+           font-size:14px; font-weight:bold; color:#0f172a; background:#f59e0b; }
+  button:hover { filter:brightness(1.12); }
+  #reset { background:#475569; color:#f1f5f9; }
+  #rand { width:100%; background:#334155; color:#f1f5f9; margin-top:4px; }
+  .stats { background:#0f172a; border:1px solid #334155; border-radius:8px;
+           padding:10px 12px; font-size:14px; line-height:1.7; margin-bottom:10px; }
+  .stats b { color:#f59e0b; }
+  .note { font-size:12px; color:#94a3b8; margin-top:10px; line-height:1.5; }
+</style>
+</head>
+<body>
+<h1>Stochastic Gradient Descent</h1>
+<p class="sub">Each step uses <b>one random row</b> &rarr; n noisy updates per epoch. Fast, jittery, wobbles near the optimum.</p>
+<div class="wrap">
+  <canvas id="cv" width="640" height="520"></canvas>
+  <div class="panel">
+    <label>Learning rate &eta; <span id="lrVal">0.06</span>
+      <input id="lr" type="range" min="0.01" max="0.30" step="0.01" value="0.06"></label>
+    <label>Steps <span id="epVal">450</span>
+      <input id="ep" type="range" min="50" max="1200" step="50" value="450"></label>
+    <div class="chk"><input type="checkbox" id="decay"> Learning-rate decay &eta;(t) = t&#8320;/(t&#8321;+t)</div>
+    <div class="chk"><input type="checkbox" id="compare" checked> Overlay smooth batch-GD path</div>
+    <div class="legend">
+      <span class="sw" style="background:#f59e0b"></span>SGD path (noisy)<br>
+      <span class="sw" style="background:#38bdf8"></span>Batch path (smooth)
+    </div>
+    <div class="btns">
+      <button id="play">&#9654; Play</button>
+      <button id="reset">Reset</button>
+    </div>
+    <div class="stats">
+      Step: <b id="it">0</b> / <span id="tot">450</span><br>
+      Effective &eta;: <b id="elr">&mdash;</b><br>
+      Loss f(x,y): <b id="loss">&mdash;</b>
+    </div>
+    <button id="rand">&#127922; Randomize start</button>
+    <p class="note">Loss bowl: f(x,y) = x&sup2; + 3y&sup2;. Each SGD step samples a <b>noisy single-row gradient</b>
+    (true gradient + random noise), exactly like updating from one random training row. With a constant rate it
+    oscillates around the optimum &mdash; turn on decay to watch it settle.</p>
+  </div>
+</div>
+<script>
+(function(){
+  var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  var W = cv.width, H = cv.height;
+  var XMIN=-6, XMAX=6, YMIN=-4.2, YMAX=4.2;
+  function px(x){ return (x-XMIN)/(XMAX-XMIN)*W; }
+  function py(y){ return H - (y-YMIN)/(YMAX-YMIN)*H; }
+  function loss(x,y){ return x*x + 3*y*y; }
+  function gauss(){ // Box-Muller
+    var u=0,v=0; while(!u) u=Math.random(); while(!v) v=Math.random();
+    return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+  }
+
+  var trail=[], pos={x:5.0,y:3.1}, start={x:5.0,y:3.1}, batchTrail=[];
+  var it=0, timer=null, running=false;
+  var lrEl=document.getElementById('lr'), epEl=document.getElementById('ep');
+  var decayEl=document.getElementById('decay'), cmpEl=document.getElementById('compare');
+  var itEl=document.getElementById('it'), totEl=document.getElementById('tot'),
+      elrEl=document.getElementById('elr'), lossEl=document.getElementById('loss');
+
+  function effLR(lr, t){
+    if (!decayEl.checked) return lr;
+    return lr * 5 / (50 + t); // eta(t) = t0/(t1+t), t0=5, t1=50
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    var levels=[0.5,2,5,10,20,40,80,130];
+    ctx.strokeStyle='rgba(71,85,105,0.8)'; ctx.lineWidth=1;
+    ctx.fillStyle='rgba(148,163,184,0.6)'; ctx.font='10px sans-serif';
+    levels.forEach(function(c){
+      var rx=Math.sqrt(c), ry=Math.sqrt(c/3);
+      ctx.beginPath(); ctx.ellipse(px(0),py(0),(px(rx)-px(0)),(py(0)-py(ry)),0,0,Math.PI*2); ctx.stroke();
+    });
+    // batch overlay (precomputed smooth path)
+    if (cmpEl.checked && batchTrail.length>1){
+      ctx.strokeStyle='#38bdf8'; ctx.lineWidth=2.4; ctx.beginPath();
+      batchTrail.forEach(function(p,i){ i?ctx.lineTo(px(p.x),py(p.y)):ctx.moveTo(px(p.x),py(p.y)); });
+      ctx.stroke();
+    }
+    // sgd trail
+    if (trail.length>1){
+      ctx.strokeStyle='#f59e0b'; ctx.lineWidth=1.2; ctx.globalAlpha=0.9; ctx.beginPath();
+      trail.forEach(function(p,i){ i?ctx.lineTo(px(p.x),py(p.y)):ctx.moveTo(px(p.x),py(p.y)); });
+      ctx.stroke(); ctx.globalAlpha=1;
+    }
+    ctx.fillStyle='#22c55e'; ctx.font='bold 18px sans-serif';
+    ctx.fillText('\u2605', px(0)-6, py(0)+6);
+    ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(px(start.x),py(start.y),5,0,Math.PI*2); ctx.fill();
+    ctx.font='11px sans-serif'; ctx.fillStyle='#fff';
+    ctx.fillText('start', px(start.x)+8, py(start.y)-6);
+    ctx.fillStyle='#f59e0b'; ctx.beginPath(); ctx.arc(px(pos.x),py(pos.y),8,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#0f172a'; ctx.lineWidth=2; ctx.stroke();
+  }
+
+  function updateStats(lr){
+    itEl.textContent=it; totEl.textContent=epEl.value;
+    elrEl.textContent=effLR(lr,it).toFixed(4);
+    lossEl.textContent=loss(pos.x,pos.y).toFixed(3);
+  }
+
+  function stepOnce(){
+    var lr=parseFloat(lrEl.value), t=it;
+    var gx=2*pos.x, gy=6*pos.y;
+    // noisy single-row gradient: true gradient + gaussian noise
+    var ngx=gx+gauss()*(0.5*Math.abs(gx)+0.05);
+    var ngy=gy+gauss()*(0.5*Math.abs(gy)+0.05);
+    var e=effLR(lr,t);
+    pos.x-=e*ngx; pos.y-=e*ngy;
+    it++; trail.push({x:pos.x,y:pos.y});
+    if (it>=parseInt(epEl.value,10)) stop();
+    draw(); updateStats(lr);
+  }
+
+  function precomputeBatch(){
+    var b={x:start.x,y:start.y}; batchTrail=[{x:b.x,y:b.y}];
+    for(var i=0;i<60;i++){ b.x-=0.1*2*b.x; b.y-=0.1*6*b.y; batchTrail.push({x:b.x,y:b.y}); }
+  }
+
+  function stop(){ running=false; if(timer){clearInterval(timer);timer=null;} document.getElementById('play').innerHTML='&#9654; Play'; }
+  function reset(){
+    stop(); pos={x:start.x,y:start.y}; trail=[{x:start.x,y:start.y}]; it=0;
+    precomputeBatch(); draw(); updateStats(parseFloat(lrEl.value));
+  }
+
+  document.getElementById('play').onclick=function(){
+    if (running){ stop(); return; }
+    if (it>=parseInt(epEl.value,10)) reset();
+    running=true; this.innerHTML='&#10074;&#10074; Pause';
+    timer=setInterval(stepOnce, 25);
+  };
+  document.getElementById('reset').onclick=reset;
+  document.getElementById('rand').onclick=function(){
+    start={x:3+Math.random()*2.5, y:(Math.random()<0.5?-1:1)*(1.5+Math.random()*2)};
+    reset();
+  };
+  lrEl.oninput=function(){ document.getElementById('lrVal').textContent=parseFloat(this.value).toFixed(2); };
+  epEl.oninput=function(){ document.getElementById('epVal').textContent=this.value; };
+  decayEl.onchange=function(){ draw(); };
+  cmpEl.onchange=function(){ draw(); };
+
+  reset();
+})();
+</script>
+</body>
+</html>
