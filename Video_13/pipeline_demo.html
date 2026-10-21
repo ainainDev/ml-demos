@@ -93,6 +93,7 @@ for (var i = 0; i < 60; i++) {
 // ---- Reusable scatter + decision-line renderer ----
 function drawDemo(canvasId, angleDeg, offset) {
   var canvas = document.getElementById(canvasId);
+  if (!canvas) return;
   var ctx = canvas.getContext('2d');
   var W = canvas.width = canvas.clientWidth || 520;
   var H = canvas.height = 320;
@@ -141,6 +142,7 @@ function wireDemo(prefix) {
   function refresh() {
     var a = parseFloat(angle.value), o = parseFloat(offset.value);
     var accuracy = drawDemo(prefix + '-canvas', a, o);
+    if (accuracy === undefined) return;
     acc.innerHTML = 'Accuracy: <b>' + accuracy.toFixed(2) + '</b> (' + Math.round(accuracy * DATA.length) + ' / ' + DATA.length + ' correct)';
   }
   angle.addEventListener('input', refresh);
