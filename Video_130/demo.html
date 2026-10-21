@@ -34,16 +34,16 @@
             border-radius:8px; padding:8px 12px; font-size:13px; margin-top:10px; }
   #banner.bad { background:#7f1d1d; border-color:#ef4444; color:#fecaca; }
   .legend { font-size: 12px; color: #64748b; margin-top: 8px; }
- %[20.dot](http://20.dot) { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
+ .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
   pre { background:#0b1226; border:1px solid #1e3a5f; border-radius:10px; padding:14px;
         font-size:12.5px; line-height:1.55; overflow-x:auto; color:#cbd5e1; }
-  pre%[20.kw](http://20.kw) { color:#c084fc; } pre .str { color:#4ade80; } pre%[20.cm](http://20.cm) { color:#64748b; }
+  pre% .kw { color:#c084fc; } pre .str { color:#4ade80; } pre% .cm { color:#64748b; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>K-Means From Scratch — Iteration Stepper</h1>
-  <p class="sub">Day 130 · K-Means built from scratch in pure JS (same logic as the video's Python class). A fixed set of 3 blobs is clustered by alternating <b>assign</b> (each point joins its nearest centroid) and <b>update</b> (each centroid moves to its cluster's mean). Try <b>max\_iterations = 1</b> — the clusters come out badly, because the centroids never settle.</p>
+  <p class="sub">Day 130 · K-Means built from scratch in pure JS (same logic as the video's Python class). A fixed set of 3 blobs is clustered by alternating <b>assign</b> (each point joins its nearest centroid) and <b>update</b> (each centroid moves to its cluster's mean). Try <b>max_iterations = 1</b> — the clusters come out badly, because the centroids never settle.</p>
   <div class="grid">
     <div class="card">
       <h2>🔁 Iteration stepper</h2>
@@ -51,7 +51,7 @@
       <div class="controls">
         <label>k = <b id="kval">3</b></label>
         <input type="range" id="kSlider" min="2" max="5" value="3" step="1">
-        <label>max\_iterations = <b id="mval">20</b></label>
+        <label>max_iterations = <b id="mval">20</b></label>
         <input type="range" id="mSlider" min="1" max="50" value="20" step="1">
       </div>
       <div class="controls">
@@ -73,39 +73,39 @@
 
 <span class="kw">class</span> <span class="str">KMeans</span>:
     <span class="cm"># n-dimensional Euclidean distance via dot product</span>
-    <span class="kw">def</span> <span class="str">\_distance</span>(self, a, b):
+    <span class="kw">def</span> <span class="str">_distance</span>(self, a, b):
         diff = a - b
-        <span class="kw">return</span> np.sqrt%[28np.dot](http://28np.dot)(diff, diff))
+        <span class="kw">return</span> np.sqrt%(np.dot(diff, diff))
 
-    <span class="kw">def</span> <span class="str">\_\_init\_\_</span>(self, n\_clusters=<span class="str">3</span>, max\_iterations=<span class="str">100</span>):
-        self.n\_clusters = n\_clusters
-        self.max\_iterations = max\_iterations
+    <span class="kw">def</span> <span class="str">__init__</span>(self, n_clusters=<span class="str">3</span>, max_iterations=<span class="str">100</span>):
+        self.n_clusters = n_clusters
+        self.max_iterations = max_iterations
         self.centroids = <span class="kw">None</span>
 
     <span class="cm"># STEP 1: every point joins its nearest centroid</span>
-    <span class="kw">def</span> <span class="str">assign\_clusters</span>(self, X):
+    <span class="kw">def</span> <span class="str">assign_clusters</span>(self, X):
         labels = []
         <span class="kw">for</span> x <span class="kw">in</span> X:
-            d = [self.<i>distance(x, c) <span class="kw">for</span> c <span class="kw">in</span> self.centroids]
+            d = [self._distance(x, c) <span class="kw">for</span> c <span class="kw">in</span> self.centroids]
             labels.append(np.argmin(d))
         <span class="kw">return</span> np.array(labels)
 
     <span class="cm"># STEP 2: each centroid moves to its cluster's mean</span>
-    <span class="kw">def</span> <span class="str">move\_centroids</span>(self, X, labels):
+    <span class="kw">def</span> <span class="str">move_centroids</span>(self, X, labels):
         <span class="kw">return</span> np.array([
             X[labels == j].mean(axis=<span class="str">0</span>)
-            <span class="kw">for</span> j <span class="kw">in</span> <span class="kw">range</span>(self.n\_clusters)
+            <span class="kw">for</span> j <span class="kw">in</span> <span class="kw">range</span>(self.n_clusters)
         ])
 
     <span class="kw">def</span> <span class="str">fit</span>(self, X):
         <span class="cm"># random init: k random data points become centroids</span>
-        idx = np.random.choice(len(X), self.n\_clusters, replace=<span class="kw">False</span>)
+        idx = np.random.choice(len(X), self.n_clusters, replace=<span class="kw">False</span>)
         self.centroids = X[idx].astype(float)
 
-        <span class="kw">for</span> i <span class="kw">in</span> <span class="kw">range</span>(self.max\_iterations):
-            labels = self.assign\_clusters(X)
+        <span class="kw">for</span> i <span class="kw">in</span> <span class="kw">range</span>(self.max_iterations):
+            labels = self.assign_clusters(X)
             old = self.centroids.copy()
-            self.centroids = self.move\_centroids(X, labels)
+            self.centroids = self.move_centroids(X, labels)
             <span class="cm"># convergence: stop when no centroid moved</span>
             <span class="kw">if</span> np.all(old == self.centroids):
                 <span class="kw">break</span>
@@ -136,14 +136,14 @@ var k=3, maxIt=20, centroids=[], labels=[], trails=[], iter=0,
 
 function pickCentroids(){
   var r2=mulberry32(seedBase+iter*0+k); seedBase+=1000;
-  var pool%</i>[<i>3DDATA.map</i>](http://3DDATA.map)<i>(function(</i>,i){return i;});
+  var pool = DATA.map(function(_, i){return i;});
   centroids=[];
   for (var c=0;c<k;c++){
     var ri=Math.floor(r2()*pool.length);
     centroids.push(DATA[pool.splice(ri,1)[0]].slice());
   }
-  trails%[3Dcentroids.map](http://3Dcentroids.map)(function(c){return [c.slice()];});
-  labels%[3DDATA.map](http://3DDATA.map)(function(){return 0;});
+  trails= centroids.map(function(c){return [c.slice()];});
+  labels= DATA.map(function(){return 0;});
   iter=0; awaiting="assign"; converged=false; hitCap=false;
   hideBanner();
 }
@@ -205,8 +205,8 @@ var phaseEl=document.getElementById("phase"), iterEl=document.getElementById("it
     wcssEl=document.getElementById("wcss"), statusEl=document.getElementById("status"),
     stepBtn=document.getElementById("stepBtn"), banner=document.getElementById("banner");
 
-function showBanner(msg,bad){ banner.textContent=msg; banner.className=bad?"bad":"";%[20banner.style](http://20banner.style).display="block"; }
-function hideBanner(){%[20banner.style](http://20banner.style).display="none"; }
+function showBanner(msg,bad){ banner.textContent=msg; banner.className=bad?"bad":""; banner.style.display="block"; }
+function hideBanner(){ banner.style.display="none"; }
 
 function stepOnce(){
   if (converged||hitCap) return;
@@ -217,7 +217,7 @@ function stepOnce(){
   } else {
     var moved=doUpdate();
     if (!moved){ converged=true; showBanner("✔ Converged at iteration "+iter+" — no centroid moved. The clustering is final.", false); }
-    else if (iter>=maxIt){ hitCap=true; showBanner("⚠ Hit the max\_iterations cap ("+maxIt+") before converging — try raising max\_iterations, or accept these half-formed clusters.", true); }
+    else if (iter>=maxIt){ hitCap=true; showBanner("⚠ Hit the max_iterations cap ("+maxIt+") before converging — try raising max_iterations, or accept these half-formed clusters.", true); }
     else statusEl.innerHTML="Centroids moved to their cluster means. Now <b>assign</b> again with the new centroids.";
     awaiting="assign";
   }
@@ -243,14 +243,14 @@ document.getElementById("resetBtn").addEventListener("click", function(){
   refresh();
 });
 document.getElementById("kSlider").addEventListener("input", function(ev){
-  k=parseInt%[28ev.target](http://28ev.target).value,10);
+  k=parseInt(ev.target.value,10);
   document.getElementById("kval").textContent=k;
   pickCentroids();
   statusEl.innerHTML="k changed to "+k+" — fresh random centroids. Press <b>Step</b> to assign.";
   refresh();
 });
 document.getElementById("mSlider").addEventListener("input", function(ev){
-  maxIt=parseInt%[28ev.target](http://28ev.target).value,10);
+  maxIt=parseInt(ev.target.value,10);
   document.getElementById("mval").textContent=maxIt;
   if (hitCap && iter<maxIt){ hitCap=false; hideBanner(); statusEl.innerHTML="Cap raised — press <b>Step</b> or <b>Run</b> to continue."; }
   refresh();

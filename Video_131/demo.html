@@ -32,11 +32,11 @@
   .stats { font-size: 13px; color: #94a3b8; margin-top: 10px; line-height: 1.7; }
   .stats b { color: #e2e8f0; }
   .legend { font-size: 12px; color: #64748b; margin-top: 8px; }
- %[20.dot](http://20.dot) { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
+ .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
   .strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
   @media (max-width: 760px) { .strip { grid-template-columns: repeat(2, 1fr); } }
- %[20.mini](http://20.mini) canvas { height: 190px; }
- %[20.mini](http://20.mini) h3 { font-size: 12.5px; color: #fff; margin: 0 0 8px; text-align: center; }
+ .mini canvas { height: 190px; }
+ .mini h3 { font-size: 12.5px; color: #fff; margin: 0 0 8px; text-align: center; }
   .stripwrap { margin-top: 16px; }
 </style>
 </head>
@@ -77,10 +77,10 @@
     <h2>🔬 Linkage comparison — all four linkages cut at k = 2</h2>
     <p class="sub" style="margin-bottom:10px">Same 10 points, same k — but the <b>linkage rule</b> changes which points end up together. This is why linkage choice matters.</p>
     <div class="strip">
-      <div class="mini"><h3>Single</h3><canvas id="m\_single" width="220" height="190"></canvas></div>
-      <div class="mini"><h3>Complete</h3><canvas id="m\_complete" width="220" height="190"></canvas></div>
-      <div class="mini"><h3>Average</h3><canvas id="m\_average" width="220" height="190"></canvas></div>
-      <div class="mini"><h3>Ward</h3><canvas id="m\_ward" width="220" height="190"></canvas></div>
+      <div class="mini"><h3>Single</h3><canvas id="m_single" width="220" height="190"></canvas></div>
+      <div class="mini"><h3>Complete</h3><canvas id="m_complete" width="220" height="190"></canvas></div>
+      <div class="mini"><h3>Average</h3><canvas id="m_average" width="220" height="190"></canvas></div>
+      <div class="mini"><h3>Ward</h3><canvas id="m_ward" width="220" height="190"></canvas></div>
     </div>
   </div>
 </div>
@@ -97,13 +97,13 @@ var DATA = [
 ];
 var MINX=0, MAXX=7.4, MINY=0, MAXY=7.4;
 var COLORS = ["#38bdf8","#f472b6","#4ade80","#fbbf24","#c084fc","#fb923c","#22d3ee","#a3e635","#fca5a5","#93c5fd"];
-var LINK\_DESC = {
+var LINK_DESC = {
   single:   "distance = closest pair of points (d = min). Chaining-prone, sensitive to noise.",
   complete: "distance = farthest pair of points (d = max). Controls outliers, can split big clusters.",
   average:  "distance = mean of all pairwise distances. A balance between min and max.",
   ward:     "merge cost = increase in within-cluster variance (ΔSSE). sklearn's default."
 };
-var LINK\_LABEL = { single: "Single", complete: "Complete", average: "Average", ward: "Ward" };
+var LINK_LABEL = { single: "Single", complete: "Complete", average: "Average", ward: "Ward" };
 
 function dist(p,q){ var dx=p[0]-q[0], dy=p[1]-q[1]; return Math.sqrt(dx*dx+dy*dy); }
 function centroid(members){
@@ -133,7 +133,7 @@ function clusterDist(a,b,type){
 
 /* Agglomerative clustering. Returns {merges:[{orderA,orderB,hA,hB,h}], maxH, finalOrder} */
 function agglomerate(type){
-  var clusters =%[20DATA.map](http://20DATA.map)(function(p,i){ return { members:[i], order:[i], top:0 }; });
+  var clusters = DATA.map(function(p,i){ return { members:[i], order:[i], top:0 }; });
   var merges = [];
   while (clusters.length > 1){
     var bi=-1, bj=-1, bd=Infinity, i, j;
@@ -142,7 +142,7 @@ function agglomerate(type){
       if (dd < bd - 1e-12){ bd=dd; bi=i; bj=j; }
     }
     var A = clusters[bi], B = clusters[bj];
-    merges.push({ orderA:A.order.slice(), orderB:B.order.slice(), hA%[3AA.top](http://3AA.top), hB%[3AB.top](http://3AB.top), h:bd });
+    merges.push({ orderA:A.order.slice(), orderB:B.order.slice(), hA: A.top, hB: B.top, h:bd });
     var merged = { members:A.members.concat(B.members), order:A.order.concat(B.order), top:bd };
     clusters = clusters.filter(function(c,idx){ return idx!==bi && idx!==bj; });
     clusters.push(merged);
@@ -154,7 +154,7 @@ function agglomerate(type){
 
 /* labels via union-find over merges with height <= cut */
 function labelsAtCut(merges, cut){
-  var parent =%[20DATA.map](http://20DATA.map)(function(\_,i){ return i; });
+  var parent = DATA.map(function(_,i){ return i; });
   function find(x){ while(parent[x]!==x){ parent[x]=parent[parent[x]]; x=parent[x]; } return x; }
   merges.forEach(function(m){
     if (m.h <= cut + 1e-9){
@@ -239,7 +239,7 @@ function drawScatter(cutH){
 /* ---------- comparison strip at k = 2 ---------- */
 function drawMinis(){
   ["single","complete","average","ward"].forEach(function(t){
-    var cv = document.getElementById("m\_"+t), c = cv.getContext("2d");
+    var cv = document.getElementById("m_"+t), c = cv.getContext("2d");
     var W=220, H=190;
     var merges = state.results[t].merges;
     // cut halfway between the last two merge heights -> exactly 2 clusters
@@ -261,8 +261,8 @@ function refresh(){
   var k = drawScatter(cutH);
   document.getElementById("cutVal").textContent = cutH.toFixed(2);
   document.getElementById("kcut").textContent = k;
-  document.getElementById("linkName").textContent = LINK\_LABEL[state.linkage];
-  document.getElementById("linkDesc").textContent = LINK\_DESC[state.linkage];
+  document.getElementById("linkName").textContent = LINK_LABEL[state.linkage];
+  document.getElementById("linkDesc").textContent = LINK_DESC[state.linkage];
   document.getElementById("clustInfo").innerHTML =
     "Cut h=" + cutH.toFixed(2) + " gives <b>" + k + "</b> cluster" + (k>1?"s":"") + ".";
   drawMinis();

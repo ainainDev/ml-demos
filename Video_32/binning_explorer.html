@@ -38,7 +38,7 @@ else{let cs=[];for(let i=0;i<k;i++)cs.push(mn+(mx-mn)*(i+0.5)/k);
 for(let it=0;it<30;it++){const asg=sd.map(x=>{let b=0,bd=1e18;cs.forEach((c,j)=>{const dd=Math.abs(x-c);if(dd<bd){bd=dd;b=j;}});return b;});
 const nc=cs.map((_,j)=>{const pts=sd.filter((_,i)=>asg[i]===j);return pts.length?pts.reduce((s,x)=>s+x,0)/pts.length:cs[j];});
 if(nc.every((c,j)=>Math.abs(c-cs[j])<1e-6))break;cs=nc;}
-e=[mn];const srt=[...cs].sort((a,b)=>a-b);for(let i=0;i<k-1;i++)e.push((srt[i]+srt[i+1])/2);e.push(mx);}
+e.push(mn);const srt=[...cs].sort((a,b)=>a-b);for(let i=0;i<k-1;i++)e.push((srt[i]+srt[i+1])/2);e.push(mx);}
 return e;}
 function draw(){const cv=document.getElementById('cv'),ctx=cv.getContext('2d');ctx.clearRect(0,0,640,260);
 const mn=Math.min(...d),mx=Math.max(...d),B=60,c=new Array(B).fill(0);

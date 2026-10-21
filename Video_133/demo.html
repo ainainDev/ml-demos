@@ -39,13 +39,13 @@
   }
   .formula code { color: #4ade80; font-weight: 700; }
   .legend { font-size: 12px; color: #64748b; margin-top: 8px; }
- %[20.dot](http://20.dot) { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
+ .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin: 0 4px 0 10px; vertical-align: middle; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>SMOTE — Synthetic Sample Interpolator</h1>
-  <p class="sub">Day 133 · Imbalanced Data. SMOTE fixes the accuracy trap without copying anyone: it builds <b>brand-new</b> minority points by interpolating between a minority point and one of its 5 nearest minority neighbours: <b>X\_new = X + λ(X\_neighbour − X)</b>.</p>
+  <p class="sub">Day 133 · Imbalanced Data. SMOTE fixes the accuracy trap without copying anyone: it builds <b>brand-new</b> minority points by interpolating between a minority point and one of its 5 nearest minority neighbours: <b>X_new = X + λ(X_neighbour − X)</b>.</p>
   <div class="grid">
     <div class="card">
       <h2>🔬 Pick a point, slide λ, watch the synthetic point</h2>
@@ -68,7 +68,7 @@
       <div class="legend"><span class="dot" style="background:#38bdf8"></span>majority (60)
         <span class="dot" style="background:#f472b6"></span>minority (8)
         <span class="dot" style="background:#4ade80"></span>synthetic (new)
-        <span class="dot" style="background:#fbbf24"></span>X\_new (live)</div>
+        <span class="dot" style="background:#fbbf24"></span>X_new (live)</div>
     </div>
     <div class="card">
       <h2>⚗️ Bulk generation</h2>
@@ -85,10 +85,10 @@
         <b>SMOTE recipe</b> (k = 5 neighbours):<br>
         1. Pick a minority point <b>X</b>.<br>
         2. Find its 5 nearest minority neighbours.<br>
-        3. Choose one neighbour <b>X\_neighbour</b> at random.<br>
+        3. Choose one neighbour <b>X_neighbour</b> at random.<br>
         4. Choose λ in [0, 1] at random.<br>
-        5. <code>X\_new = X + λ(X\_neighbour − X)</code><br>
-        <span style="color:#94a3b8">X\_new lands on the segment between X and its neighbour — a genuinely new point, not a duplicate.</span>
+        5. <code>X_new = X + λ(X_neighbour − X)</code><br>
+        <span style="color:#94a3b8">X_new lands on the segment between X and its neighbour — a genuinely new point, not a duplicate.</span>
       </div>
     </div>
   </div>
@@ -157,7 +157,7 @@ function draw(){
     nbrs.forEach(function(j, r){
       ctx.fillText(r+1, x2px(MINR[j][0])+8, y2px(MINR[j][1])-8);
     });
-    // live X\_new
+    // live X_new
     var Xn = MINR[nbrs[nbrIdx]];
     var Xnew = [X[0]+lambda*(Xn[0]-X[0]), X[1]+lambda*(Xn[1]-X[1])];
     drawStar(x2px(Xnew[0]), y2px(Xnew[1]), 11, "#fbbf24");
@@ -166,7 +166,7 @@ function draw(){
     document.getElementById("selInfo").innerHTML =
       "X = <b>("+X[0].toFixed(1)+", "+X[1].toFixed(1)+")</b> · neighbour #"+(nbrIdx+1)+
       " X<sub>n</sub> = <b>("+Xn[0].toFixed(1)+", "+Xn[1].toFixed(1)+")</b> · λ = <b>"+lambda.toFixed(2)+
-      "</b> → X\_new = <b>("+Xnew[0].toFixed(2)+", "+Xnew[1].toFixed(2)+")</b>";
+      "</b> → X_new = <b>("+Xnew[0].toFixed(2)+", "+Xnew[1].toFixed(2)+")</b>";
   }
   // minority
   MINR.forEach(function(p, idx){
@@ -182,7 +182,7 @@ function draw(){
 /* ---------- interactions ---------- */
 cv.addEventListener("click", function(e){
   var r = cv.getBoundingClientRect();
-  var mx = (e.clientX - r.left) * (CW / r.width), my = (e.clientY -%[20r.top](http://20r.top)) * (CH / r.height);
+  var mx = (e.clientX - r.left) * (CW / r.width), my = (e.clientY - r.top) * (CH / r.height);
   var best = -1, bd = 18*18;
   MINR.forEach(function(p, idx){
     var d = (x2px(p[0])-mx)*(x2px(p[0])-mx) + (y2px(p[1])-my)*(y2px(p[1])-my);
@@ -190,10 +190,10 @@ cv.addEventListener("click", function(e){
   });
   if (best >= 0){
     sel = best; nbrIdx = 0;
-    var ds =%[20MINR.map](http://20MINR.map)(function(p, j){ return {j:j, d:dist2(MINR[sel], p)}; })
+    var ds = MINR.map(function(p, j){ return {j:j, d:dist2(MINR[sel], p)}; })
                  .filter(function(o){ return o.j !== sel; })
                  .sort(function(a,b){ return a.d-b.d; });
-    nbrs = ds.slice(0,5%[29.map](http://29.map)(function(o){ return o.j; });
+    nbrs = ds.slice(0,5).map(function(o){ return o.j; });
     for (var k=0;k<5;k++){
       var b = document.getElementById("n"+k);
       b.disabled = false;
@@ -213,7 +213,7 @@ for (var k2=0;k2<5;k2++){
 }
 
 document.getElementById("lam").addEventListener("input", function(e){
-  lambda = parseFloat%[28e.target](http://28e.target).value);
+  lambda = parseFloat(e.target.value);
   document.getElementById("lamVal").textContent = lambda.toFixed(2);
   draw();
 });
@@ -221,7 +221,7 @@ document.getElementById("lam").addEventListener("input", function(e){
 document.getElementById("genBtn").addEventListener("click", function(){
   for (var s=0;s<20;s++){
     var i = Math.floor(rgen()*MINR.length);
-    var ds =%[20MINR.map](http://20MINR.map)(function(p,j){ return {j:j, d:dist2(MINR[i],p)}; })
+    var ds = MINR.map(function(p,j){ return {j:j, d:dist2(MINR[i],p)}; })
                  .filter(function(o){ return o.j!==i; })
                  .sort(function(a,b){ return a.d-b.d; });
     var jn = ds[Math.floor(rgen()*5)].j;
