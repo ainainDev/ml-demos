@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polynomial Regression Degree Explorer — Day 61</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8; --acc:#38bdf8; --good:#4ade80; --bad:#f43f5e; --warn:#fbbf24; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .math { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:13.5px; line-height:1.9; color:#cbd5e1; margin:12px 0; }
+  .math b { color:var(--acc); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  canvas { width:100%; height:auto; display:block; background:#0b1220; border-radius:8px; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin:8px 0; }
+  label { font-size:13px; color:var(--dim); display:flex; align-items:center; gap:8px; }
+  label output { color:var(--acc); font-weight:700; min-width:52px; }
+  input[type=range] { width:220px; accent-color:var(--acc); }
+  button { background:#0369a1; color:#fff; border:0; border-radius:8px; padding:9px 18px; font-size:14px; cursor:pointer; }
+  button:hover { background:#0284c7; }
+  .stats { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+  .stat { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:8px 14px; font-size:13px; }
+  .stat b { color:var(--acc); }
+  .stat.fit-under b { color:var(--warn); }
+  .stat.fit-good b { color:var(--good); }
+  .stat.fit-over b { color:var(--bad); }
+  .note { font-size:12.5px; color:var(--dim); margin-top:10px; line-height:1.6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📈 Polynomial Regression Degree Explorer
+    <span class="sub">Day 61 — Polynomial Regression · slide the degree and watch the curve bend</span>
+  </h1>
+
+  <div class="math">
+    <b>True relationship:</b> y = x³ − 2x² + noise &nbsp;·&nbsp; <b>Fitted model:</b> ŷ = w₀ + w₁x + … + w<sub>d</sub>x<sup>d</sup><br>
+    Weights come from the <b>normal equation</b>: w = (X<sup>T</sup>X)<sup>−1</sup>X<sup>T</sup>y
+  </div>
+
+  <div class="card">
+    <h3>Data + fitted curve — blue = train, amber = test</h3>
+    <canvas id="plot" width="640" height="360"></canvas>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <label>Polynomial degree <input type="range" id="deg" min="1" max="9" step="1" value="1"><output id="degOut">1</output></label>
+    </div>
+    <div class="stats">
+      <div class="stat">Train MSE <b id="stTrain">–</b></div>
+      <div class="stat">Test MSE <b id="stTest">–</b></div>
+      <div class="stat" id="stFitBox">Fit <b id="stFit">–</b></div>
+    </div>
+    <p class="note">A low-degree curve is too stiff to follow the bend — it misses the data in a systematic way (high <em>bias</em>, underfit). A very high-degree curve twists to hit nearly every training dot, including the noise — so it swings wildly between dots and fails on new test points (high <em>variance</em>, overfit). The sweet spot sits in the middle. This tension is the <b>bias–variance tradeoff</b>, the topic of the very next video.</p>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---- deterministic pseudo-random generator (fixed seed) ----
+let seed = 2026061;
+function rand() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+function randn() { // Box–Muller gaussian
+  let u = 0, v = 0;
+  while (u === 0) u = rand();
+  while (v === 0) v = rand();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+// ---- pure math: top-level ----
+function solveLinear(A, b) { // Gaussian elimination with partial pivoting
+  const n = b.length;
+  const M = A.map((row, i) => row.concat([b[i]]));
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    const tmp = M[c]; M[c] = M[piv]; M[piv] = tmp;
+    const d = M[c][c] === 0 ? 1e-12 : M[c][c];
+    for (let j = c; j <= n; j++) M[c][j] /= d;
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = M[r][c];
+      for (let j = c; j <= n; j++) M[r][j] -= f * M[c][j];
+    }
+  }
+  return M.map(row => row[n]);
+}
+function fitPoly(xs, ys, deg) { // normal equation w = (X'X)^-1 X'y
+  const p = deg + 1;
+  const XtX = [], Xty = new Array(p).fill(0);
+  for (let i = 0; i < p; i++) {
+    XtX.push(new Array(p).fill(0));
+    for (let j = 0; j < p; j++) {
+      let s = 0;
+      for (let k = 0; k < xs.length; k++) s += Math.pow(xs[k], i + j);
+      XtX[i][j] = s;
+    }
+    let s = 0;
+    for (let k = 0; k < xs.length; k++) s += Math.pow(xs[k], i) * ys[k];
+    Xty[i] = s;
+  }
+  return solveLinear(XtX, Xty);
+}
+function predict(w, x) {
+  let s = 0;
+  for (let i = 0; i < w.length; i++) s += w[i] * Math.pow(x, i);
+  return s;
+}
+function mse(w, xs, ys) {
+  let s = 0;
+  for (let i = 0; i < xs.length; i++) { const e = ys[i] - predict(w, xs[i]); s += e * e; }
+  return s / xs.length;
+}
+function fitLabel(deg) {
+  if (deg <= 2) return { text: "Underfit (high bias)", cls: "fit-under" };
+  if (deg <= 4) return { text: "Good fit", cls: "fit-good" };
+  if (deg === 5) return { text: "Borderline overfit", cls: "fit-under" };
+  return { text: "Overfit (high variance)", cls: "fit-over" };
+}
+
+// ---- fixed dataset ----
+const N = 90, trainX = [], trainY = [], testX = [], testY = [];
+for (let i = 0; i < N; i++) {
+  const x = -3 + 6 * (i / (N - 1));
+  const y = Math.pow(x, 3) - 2 * x * x + randn() * 3.2;
+  if (i % 3 === 2) { testX.push(x); testY.push(y); } else { trainX.push(x); trainY.push(y); }
+}
+
+let degree = 1;
+const cvs = document.getElementById("plot");
+const ctx = cvs.getContext("2d");
+const PAD = { l: 44, r: 12, t: 14, b: 30 };
+
+function draw(w) {
+  const W = cvs.width, H = cvs.height;
+  ctx.clearRect(0, 0, W, H);
+  const x0 = -3.2, x1 = 3.2;
+  let yMin = Infinity, yMax = -Infinity;
+  trainY.concat(testY).forEach(v => { yMin = Math.min(yMin, v); yMax = Math.max(yMax, v); });
+  yMin -= 3; yMax += 3;
+  const X = x => PAD.l + (x - x0) / (x1 - x0) * (W - PAD.l - PAD.r);
+  const Y = y => H - PAD.b - (y - yMin) / (yMax - yMin) * (H - PAD.t - PAD.b);
+
+  ctx.strokeStyle = "#334155"; ctx.lineWidth = 1;
+  ctx.fillStyle = "#64748b"; ctx.font = "11px system-ui"; ctx.textAlign = "center";
+  for (let g = -3; g <= 3; g++) { ctx.fillText(g, X(g), H - 12); }
+  ctx.textAlign = "right";
+  for (let g = Math.ceil(yMin / 10) * 10; g <= yMax; g += 10) { ctx.fillText(g, PAD.l - 6, Y(g) + 4); }
+
+  // fitted curve
+  const fl = fitLabel(degree);
+  ctx.strokeStyle = fl.cls === "fit-good" ? "#4ade80" : (fl.cls === "fit-over" ? "#f43f5e" : "#fbbf24");
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  for (let px = 0; px <= 400; px++) {
+    const x = x0 + (x1 - x0) * px / 400;
+    const y = predict(w, x);
+    if (px === 0) ctx.moveTo(X(x), Y(y)); else ctx.lineTo(X(x), Y(y));
+  }
+  ctx.stroke();
+
+  // scatter
+  function dots(xs, ys, color) {
+    ctx.fillStyle = color;
+    for (let i = 0; i < xs.length; i++) {
+      ctx.beginPath(); ctx.arc(X(xs[i]), Y(ys[i]), 3.2, 0, 2 * Math.PI); ctx.fill();
+    }
+  }
+  dots(testX, testY, "#fbbf24");
+  dots(trainX, trainY, "#38bdf8");
+}
+
+function update() {
+  const w = fitPoly(trainX, trainY, degree);
+  const tr = mse(w, trainX, trainY), te = mse(w, testX, testY);
+  document.getElementById("stTrain").textContent = tr.toFixed(2);
+  document.getElementById("stTest").textContent = te.toFixed(2);
+  const fl = fitLabel(degree);
+  document.getElementById("stFit").textContent = fl.text;
+  const box = document.getElementById("stFitBox");
+  box.classList.remove("fit-under", "fit-good", "fit-over");
+  box.classList.add(fl.cls);
+  document.getElementById("degOut").textContent = degree;
+  draw(w);
+}
+document.getElementById("deg").addEventListener("input", function () {
+  degree = parseInt(this.value, 10);
+  update();
+});
+update();
+</script>
+</body>
+</html>
