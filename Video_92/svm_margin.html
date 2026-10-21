@@ -229,3 +229,234 @@ redraw();
 </script>
 </body>
 </html>
+](https://itty.bitty.site/#SVM-Margin-Explorer/data:text/html;charset=utf-8,<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SVM Margin Explorer — Day 92</title>
+<style>
+:root{--bg:#0f172a;--panel:#1e293b;--line:#334155;--txt:#e2e8f0;--dim:#94a3b8;--acc:#38bdf8;--good:#4ade80;--bad:#f43f5e;--warn:#fbbf24;--pink:#f472b6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1000px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:22px;margin:6px 0 4px}
+h1 .sub{color:var(--dim);font-weight:400;font-size:14px;display:block;margin-top:2px}
+.math{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:13.5px;line-height:1.9;color:#cbd5e1;margin:12px 0}
+.math b{color:var(--acc)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px}
+.card h3{margin:2px 0 8px;font-size:14px;color:var(--dim);font-weight:600}
+canvas{width:100%;height:420px;display:block;background:#0b1220;border-radius:8px}
+.controls{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:14px}
+.row{display:flex;flex-wrap:wrap;gap:18px;align-items:center;margin:8px 0}
+label{font-size:13px;color:var(--dim);display:flex;align-items:center;gap:8px}
+label output{color:var(--acc);font-weight:700;min-width:56px}
+input[type=range]{width:200px;accent-color:var(--acc)}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
+.stat{background:#0b1220;border:1px solid var(--line);border-radius:8px;padding:8px 14px;font-size:13px}
+.stat b{color:var(--acc)}
+.stat.bad b{color:var(--bad)}
+.stat.good b{color:var(--good)}
+.note{font-size:12.5px;color:var(--dim);margin-top:10px;line-height:1.6}
+.note b{color:var(--warn)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--dim);margin-top:8px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:baseline}
+.ring{display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid;margin-right:5px;vertical-align:baseline}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>⚡ SVM Margin Explorer<span class="sub">Day 92 — drag the boundary, watch the margin and the support vectors</span></h1>
+<div class="math">
+<b>Boundary:</b> y = m·x + b &nbsp;⇔&nbsp; w·x + c = 0 with w = (m, −1), c = b &nbsp;·&nbsp;
+<b>Margin width:</b> 2/‖w‖ = 2/√(m² + 1) &nbsp;·&nbsp;
+<b>Support vectors:</b> correctly-classified points closest to the boundary &nbsp;·&nbsp;
+<b>Violation:</b> y<sub>i</sub>(w·x<sub>i</sub> + c) &lt; 1
+</div>
+<div class="card"><h3>Data + boundary + gutter lines (w·x + c = ±1)</h3><canvas id="svmCanvas" width="640" height="420"></canvas>
+<div class="legend">
+<span><span class="dot" style="background:#38bdf8"></span>class +1</span>
+<span><span class="dot" style="background:#f472b6"></span>class −1</span>
+<span><span class="ring" style="border-color:#fbbf24"></span>support vector</span>
+<span><span class="ring" style="border-color:#f43f5e"></span>margin violation</span>
+</div>
+</div>
+<div class="controls">
+<div class="row">
+<label>Slope m <input type="range" id="slope" min="-2" max="2" step="0.05" value="1"><output id="slopeOut">1.00</output></label>
+<label>Intercept b <input type="range" id="icept" min="-3" max="3" step="0.1" value="0"><output id="iceptOut">0.0</output></label>
+</div>
+<div class="stats">
+<div class="stat">Margin 2/‖w‖ <b id="stMargin">–</b></div>
+<div class="stat">Support vectors <b id="stSV">–</b></div>
+<div class="stat" id="violBox">Margin violations <b id="stViol">–</b></div>
+</div>
+<p class="note" id="statusLine"></p>
+</div>
+</div>
+
+<script>
+"use strict";
+// ---- deterministic pseudo-random generator (fixed seed) ----
+let seed = 2026092;
+function rand(){ seed = (seed*1103515245+12345)%2147483648; return seed/2147483648; }
+function randn(){
+  let u = 0, v = 0;
+  while(u === 0) u = rand();
+  while(v === 0) v = rand();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+}
+
+// ---- synthetic 2-D binary dataset: two linearly separable blobs ----
+const N = 60, xs = [], ys = [];
+for(let i = 0; i < N; i++){
+  const plus = i < N/2;                      // class +1: lower-right blob; class -1: upper-left blob
+  const cx = plus ? 1.6 : -1.6, cy = plus ? -1.6 : 1.6;
+  xs.push([cx + randn()*0.55, cy + randn()*0.55]);
+  ys.push(plus ? 1 : -1);
+}
+
+// ---- top-level pure functions ----
+function marginWidth(m){                     // w = (m, -1) so ||w|| = sqrt(m^2 + 1)
+  return 2/Math.sqrt(m*m + 1);
+}
+
+function statsForLine(m, b){
+  const w0 = m, w1 = -1, c = b;
+  const norm = Math.sqrt(w0*w0 + w1*w1);
+  const dist = [];
+  let nViol = 0;
+  for(let i = 0; i < xs.length; i++){
+    const f = w0*xs[i][0] + w1*xs[i][1] + c; // w.x + c
+    const signed = ys[i]*f;
+    if(signed < 1) nViol++;                  // inside the gutter corridor (or misclassified)
+    dist.push({i:i, d:Math.abs(f), ok: signed > 0});
+  }
+  // support vectors: closest correctly-classified points, top-2 per class
+  const svIdx = [];
+  const classes = [1, -1];
+  for(let k = 0; k < classes.length; k++){
+    const cand = dist.filter(function(o){ return ys[o.i] === classes[k] && o.ok; })
+                     .sort(function(a, z){ return a.d - z.d; })
+                     .slice(0, 2);
+    for(let j = 0; j < cand.length; j++) svIdx.push(cand[j].i);
+  }
+  return {margin: 2/norm, nSupport: svIdx.length, nViolations: nViol, svIdx: svIdx};
+}
+
+// ---- drawing ----
+const canvas = document.getElementById("svmCanvas");
+const ctx = canvas.getContext("2d");
+const XMIN = -4, XMAX = 4, YMIN = -4, YMAX = 4;
+function pxx(x){ return (x - XMIN)/(XMAX - XMIN)*canvas.width; }
+function pyy(y){ return canvas.height - (y - YMIN)/(YMAX - YMIN)*canvas.height; }
+
+function drawLine(m, b, off, style, width, dash){
+  ctx.strokeStyle = style; ctx.lineWidth = width; ctx.setLineDash(dash || []);
+  ctx.beginPath();
+  ctx.moveTo(pxx(XMIN), pyy(m*XMIN + b + off));
+  ctx.lineTo(pxx(XMAX), pyy(m*XMAX + b + off));
+  ctx.stroke(); ctx.setLineDash([]);
+}
+
+function drawAll(m, b){
+  const s = statsForLine(m, b);
+  const violSet = {};
+  for(let i = 0; i < xs.length; i++){
+    const f = m*xs[i][0] - xs[i][1] + b;
+    if(ys[i]*f < 1) violSet[i] = true;
+  }
+  const svSet = {};
+  for(let j = 0; j < s.svIdx.length; j++) svSet[s.svIdx[j]] = true;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // grid
+  ctx.strokeStyle = "#1e293b"; ctx.lineWidth = 1;
+  for(let g = -4; g <= 4; g += 2){
+    ctx.beginPath(); ctx.moveTo(pxx(g), 0); ctx.lineTo(pxx(g), canvas.height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, pyy(g)); ctx.lineTo(canvas.width, pyy(g)); ctx.stroke();
+  }
+  // gutter lines w.x + c = +/-1  ->  y = m*x + b -/+ 1
+  drawLine(m, b, -1, "#94a3b8", 1.5, [6, 5]);
+  drawLine(m, b,  1, "#94a3b8", 1.5, [6, 5]);
+  // boundary w.x + c = 0
+  drawLine(m, b, 0, "#e2e8f0", 3, []);
+  ctx.fillStyle = "#e2e8f0"; ctx.font = "12px system-ui";
+  if(Math.abs(m*3.9 + b) < 3.6) ctx.fillText("w·x + b = 0", pxx(3.9) - 96, pyy(m*3.9 + b) - 6);
+
+  // points
+  for(let i = 0; i < xs.length; i++){
+    const X = pxx(xs[i][0]), Y = pyy(xs[i][1]);
+    ctx.beginPath(); ctx.arc(X, Y, 4.5, 0, 2*Math.PI);
+    ctx.fillStyle = ys[i] === 1 ? "#38bdf8" : "#f472b6"; ctx.fill();
+    ctx.strokeStyle = "#0f172a"; ctx.lineWidth = 1; ctx.stroke();
+    if(violSet[i]){
+      ctx.beginPath(); ctx.arc(X, Y, 8, 0, 2*Math.PI);
+      ctx.strokeStyle = "#f43f5e"; ctx.lineWidth = 2.5; ctx.stroke();
+    } else if(svSet[i]){
+      ctx.beginPath(); ctx.arc(X, Y, 8, 0, 2*Math.PI);
+      ctx.strokeStyle = "#fbbf24"; ctx.lineWidth = 2; ctx.stroke();
+    }
+  }
+  // margin double-arrow between the gutters, drawn perpendicular to the boundary
+  const norm2 = m*m + 1, norm = Math.sqrt(norm2);
+  const nx = m/norm, ny = -1/norm;             // unit normal
+  const p0x = -b*m/norm2, p0y = b/norm2;       // closest point of boundary to origin
+  const ax = p0x - nx/norm, ay = p0y - ny/norm;
+  const bx = p0x + nx/norm, by = p0y + ny/norm;
+  if(Math.abs(ax) < 3.9 && Math.abs(ay) < 3.9 && Math.abs(bx) < 3.9 && Math.abs(by) < 3.9){
+    ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(pxx(ax), pyy(ay)); ctx.lineTo(pxx(bx), pyy(by)); ctx.stroke();
+    const hx = (ax+bx)/2, hy = (ay+by)/2, ox = -ny*0.45, oy = nx*0.45;
+    ctx.fillStyle = "#e2e8f0"; ctx.font = "12px system-ui";
+    ctx.fillText("margin = 2/‖w‖", pxx(hx+ox), pyy(hy+oy));
+    drawArrowhead(ax, ay, -nx, ny, 8);
+    drawArrowhead(bx, by, nx, -ny, 8);
+  }
+  return s;
+}
+
+function drawArrowhead(ex, ey, dx, dy, size){
+  // direction (dx,dy) is the unit direction of the arrow in data coords; canvas y is flipped
+  const cdx = dx, cdy = -dy;
+  const len = Math.sqrt(cdx*cdx + cdy*cdy) || 1;
+  const ux = cdx/len, uy = cdy/len;
+  const X = pxx(ex), Y = pyy(ey);
+  ctx.beginPath();
+  ctx.moveTo(X, Y);
+  ctx.lineTo(X - ux*size + (-uy)*size*0.45, Y - uy*size + (ux)*size*0.45);
+  ctx.moveTo(X, Y);
+  ctx.lineTo(X - ux*size - (-uy)*size*0.45, Y - uy*size - (ux)*size*0.45);
+  ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 1.5; ctx.stroke();
+}
+
+function updateStats(m, b){
+  const s = statsForLine(m, b);
+  document.getElementById("stMargin").textContent = s.margin.toFixed(3);
+  document.getElementById("stSV").textContent = s.nSupport;
+  const violBox = document.getElementById("violBox");
+  document.getElementById("stViol").textContent = s.nViolations;
+  violBox.className = "stat " + (s.nViolations > 0 ? "bad" : "good");
+  const line = document.getElementById("statusLine");
+  if(s.nViolations > 0){
+    line.innerHTML = "⚠ <b>" + s.nViolations + "</b> margin violation(s) in red — this gutter pair does not separate the data. Max margin? The best line is the one with the <b>widest violation-free</b> gutter pair.";
+  } else {
+    line.innerHTML = "✓ No violations — this gutter pair is valid. Max margin? The best line is the one with the <b>widest violation-free</b> gutter pair — nudge m and b and see whether the margin grows.";
+  }
+}
+
+function redraw(){
+  const m = parseFloat(document.getElementById("slope").value);
+  const b = parseFloat(document.getElementById("icept").value);
+  document.getElementById("slopeOut").textContent = m.toFixed(2);
+  document.getElementById("iceptOut").textContent = b.toFixed(1);
+  drawAll(m, b);
+  updateStats(m, b);
+}
+
+document.getElementById("slope").addEventListener("input", redraw);
+document.getElementById("icept").addEventListener("input", redraw);
+redraw();
+</script>
+</body>
+</html>

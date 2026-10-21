@@ -119,6 +119,276 @@ for (let i = 0; i < NB; i++) {
 }
 
 // seeded 70/30 train/test split via Fisher-Yates with our own rand()
+const order = dataX.map((\_, i) => i);
+for (let i = order.length - 1; i > 0; i--) {
+  const j = Math.floor(rand() * (i + 1));
+  const t = order[i]; order[i] = order[j]; order[j] = t;
+}
+const nTrain = Math.floor(NB * 0.7);
+const trainX = [], trainY = [], testX = [], testY = [];
+for (let i = 0; i < NB; i++) {
+  const idx = order[i];
+  if (i < nTrain) { trainX.push(dataX[idx]); trainY.push(dataY[idx]); }
+  else { testX.push(dataX[idx]); testY.push(dataY[idx]); }
+}
+
+// ---- precomputed k vs accuracy curve for k = 1..15 ----
+const accCurve = [];
+for (let k = 1; k <= 15; k++) accCurve.push(accuracyForK(k));
+let bestK = 1;
+for (let k = 1; k <= 15; k++) if (accCurve[k - 1] > accCurve[bestK - 1]) bestK = k;
+
+// ---- canvases and mapping ----
+const voteC = document.getElementById("voteCanvas");
+const accC = document.getElementById("accCanvas");
+const vctx = voteC.getContext("2d"), actx = accC.getContext("2d");
+const XMIN = -4, XMAX = 4, YMIN = -4, YMAX = 4;
+function px(v, vmin, vmax, w) { return (v - vmin) / (vmax - vmin) * w; }
+function pxx(x) { return px(x, XMIN, XMAX, voteC.width); }
+function pyy(y) { return voteC.height - px(y, YMIN, YMAX, voteC.height); }
+function toData(pxv, pyv) {
+  return [XMIN + (pxv / voteC.width) * (XMAX - XMIN),
+          YMIN + ((voteC.height - pyv) / voteC.height) * (YMAX - YMIN)];
+}
+
+let k = 3;
+let query = [0.2, -0.1];
+
+const CLS = ["#38bdf8", "#f472b6"];
+
+function drawVote() {
+  vctx.clearRect(0, 0, voteC.width, voteC.height);
+  // faint grid
+  vctx.strokeStyle = "#1e293b"; vctx.lineWidth = 1;
+  for (let g = -4; g <= 4; g += 2) {
+    vctx.beginPath(); vctx.moveTo(pxx(g), 0); vctx.lineTo(pxx(g), voteC.height); vctx.stroke();
+    vctx.beginPath(); vctx.moveTo(0, pyy(g)); vctx.lineTo(voteC.width, pyy(g)); vctx.stroke();
+  }
+  // training points
+  for (let i = 0; i < trainX.length; i++) {
+    vctx.beginPath();
+    vctx.arc(pxx(trainX[i][0]), pyy(trainX[i][1]), 4, 0, 2 * Math.PI);
+    vctx.fillStyle = CLS[trainY[i]];
+    vctx.fill();
+    vctx.strokeStyle = "#0f172a"; vctx.lineWidth = 1; vctx.stroke();
+  }
+  // nearest neighbors: sorted distances
+  const idx = trainX.map((p, i) => [euclid(p, query), i]);
+  idx.sort((p, r) => p[0] - r[0]);
+  const top = idx.slice(0, Math.min(k, idx.length));
+  // lines from query to neighbors
+  vctx.strokeStyle = "rgba(226,232,240,0.35)"; vctx.lineWidth = 1;
+  for (const t of top) {
+    const p = trainX[t[1]];
+    vctx.beginPath(); vctx.moveTo(pxx(query[0]), pyy(query[1]));
+    vctx.lineTo(pxx(p[0]), pyy(p[1])); vctx.stroke();
+  }
+  // highlight rings around the k nearest
+  for (const t of top) {
+    const p = trainX[t[1]];
+    vctx.beginPath();
+    vctx.arc(pxx(p[0]), pyy(p[1]), 9, 0, 2 * Math.PI);
+    vctx.strokeStyle = "#fbbf24"; vctx.lineWidth = 2.5; vctx.stroke();
+  }
+  // query star
+  vctx.fillStyle = "#ffffff"; vctx.font = "18px system-ui";
+  vctx.textAlign = "center"; vctx.textBaseline = "middle";
+  vctx.fillText("★", pxx(query[0]), pyy(query[1]));
+}
+
+function updateStats() {
+  const idx = trainX.map((p, i) => [euclid(p, query), trainY[i]]);
+  idx.sort((p, r) => p[0] - r[0]);
+  const top = idx.slice(0, Math.min(k, idx.length));
+  let c0 = 0, c1 = 0;
+  for (const t of top) { if (t[1] === 0) c0++; else c1++; }
+  let pred = c1 > c0 ? 1 : (c0 > c1 ? 0 : top[0][1]);
+  document.getElementById("stPred").textContent = pred === 0 ? "Class A" : "Class B";
+  document.getElementById("stA").textContent = c0;
+  document.getElementById("stB").textContent = c1;
+}
+
+function drawAcc() {
+  actx.clearRect(0, 0, accC.width, accC.height);
+  const W = accC.width, H = accC.height, pad = 40;
+  const amax = Math.max.apply(null, accCurve), amin = Math.min.apply(null, accCurve);
+  const lo = Math.max(0, amin - 0.03), hi = Math.min(1, amax + 0.03);
+  const X = (kk) => pad + (W - pad - 10) * ((kk - 1) / 14);
+  const Y = (a) => 6 + (H - pad - 10) * (1 - (a - lo) / (hi - lo));
+  actx.strokeStyle = "#334155"; actx.lineWidth = 1;
+  actx.beginPath(); actx.moveTo(pad, 6); actx.lineTo(pad, H - pad); actx.lineTo(W - 6, H - pad); actx.stroke();
+  actx.fillStyle = "#94a3b8"; actx.font = "11px system-ui";
+  actx.fillText(hi.toFixed(2), 6, 14); actx.fillText(lo.toFixed(2), 6, H - pad + 4);
+  actx.fillText("k", W - 14, H - pad + 18);
+  actx.strokeStyle = "#38bdf8"; actx.lineWidth = 2.5; actx.beginPath();
+  for (let kk = 1; kk <= 15; kk++) {
+    const x = X(kk), y = Y(accCurve[kk - 1]);
+    if (kk === 1) actx.moveTo(x, y); else actx.lineTo(x, y);
+  }
+  actx.stroke();
+  for (let kk = 1; kk <= 15; kk++) {
+    actx.beginPath(); actx.arc(X(kk), Y(accCurve[kk - 1]), 3.5, 0, 2 * Math.PI);
+    actx.fillStyle = "#38bdf8"; actx.fill();
+  }
+  // best-k marker
+  const bx = X(bestK), by = Y(accCurve[bestK - 1]);
+  actx.fillStyle = "#fbbf24"; actx.font = "16px system-ui";
+  actx.textAlign = "center"; actx.textBaseline = "middle";
+  actx.fillText("★", bx, by - 16);
+  actx.fillStyle = "#94a3b8"; actx.font = "12px system-ui";
+  actx.fillText("best k=" + bestK + " (" + (accCurve[bestK - 1] * 100).toFixed(1) + "%)", bx, by + 18);
+  // current k marker
+  actx.strokeStyle = "#f43f5e"; actx.lineWidth = 2; actx.setLineDash([4, 3]);
+  actx.beginPath(); actx.moveTo(X(k), 6); actx.lineTo(X(k), H - pad); actx.stroke();
+  actx.setLineDash([]);
+  // x tick labels
+  actx.fillStyle = "#94a3b8"; actx.font = "10px system-ui"; actx.textAlign = "center";
+  for (let kk = 1; kk <= 15; kk += 2) actx.fillText(String(kk), X(kk), H - pad + 14);
+}
+
+function placeQuery(pxv, pyv) {
+  const r = voteC.getBoundingClientRect();
+  const sx = voteC.width / r.width, sy = voteC.height / r.height;
+  query = toData((pxv - r.left) * sx, (pyv - r.top) * sy);
+  drawVote(); updateStats();
+}
+
+voteC.addEventListener("click", function (e) { placeQuery(e.clientX, e.clientY); });
+document.getElementById("kSlider").addEventListener("input", function () {
+  k = parseInt(this.value, 10);
+  document.getElementById("kOut").textContent = this.value;
+  drawVote(); updateStats(); drawAcc();
+});
+document.getElementById("randomBtn").addEventListener("click", function () {
+  query = [XMIN + rand() * (XMAX - XMIN), YMIN + rand() * (YMAX - YMIN)];
+  drawVote(); updateStats();
+});
+
+drawVote(); updateStats(); drawAcc();
+</script>
+</body>
+</html>
+](https://itty.bitty.site/#KNN-Voting-Lab/data:text/html;charset=utf-8,<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KNN Voting Playground — Day 91</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --txt:#e2e8f0; --dim:#94a3b8;
+          --acc:#38bdf8; --good:#4ade80; --bad:#f43f5e; --warn:#fbbf24; --a:#38bdf8; --b:#f472b6; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:6px 0 4px; }
+  h1 .sub { color:var(--dim); font-weight:400; font-size:14px; display:block; margin-top:2px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:12px; }
+  @media (max-width:820px){ .grid{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card h3 { margin:2px 0 8px; font-size:14px; color:var(--dim); font-weight:600; }
+  canvas { width:100%; height:300px; display:block; background:#0b1220; border-radius:8px; cursor:crosshair; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin:8px 0; }
+  label { font-size:13px; color:var(--dim); display:flex; align-items:center; gap:8px; }
+  label output { color:var(--acc); font-weight:700; min-width:28px; }
+  input[type=range] { width:200px; accent-color:var(--acc); }
+  button { background:#0369a1; color:#fff; border:0; border-radius:8px; padding:9px 18px; font-size:14px; cursor:pointer; }
+  button:hover { background:#0284c7; }
+  .stats { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+  .stat { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:8px 14px; font-size:13px; }
+  .stat b { color:var(--acc); }
+  .note { font-size:12.5px; color:var(--dim); margin-top:10px; line-height:1.6; }
+  .legend { font-size:12px; color:var(--dim); margin-top:6px; }
+  .legend span.dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin:0 4px 0 10px; vertical-align:middle; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>⭐ KNN Voting Playground
+    <span class="sub">Day 91 — click to drop a query point, drag k, and watch the neighborhood vote</span>
+  </h1>
+
+  <div class="grid">
+    <div class="card"><h3>1. Click anywhere to place a query point ★</h3>
+      <canvas id="voteCanvas" width="480" height="300"></canvas>
+      <div class="legend">
+        <span class="dot" style="background:#38bdf8"></span>Class A
+        <span class="dot" style="background:#f472b6"></span>Class B
+        <span class="dot" style="background:#fff;border-radius:0"></span>Query ★ (ringed = voting neighbors)
+      </div>
+    </div>
+    <div class="card"><h3>2. k vs accuracy (seeded 70/30 split, k = 1…15)</h3>
+      <canvas id="accCanvas" width="480" height="300"></canvas>
+      <div class="legend">Best k on this run is marked with a ★ marker.</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <label>k (neighbors) <input type="range" id="kSlider" min="1" max="15" step="1" value="3"><output id="kOut">3</output></label>
+      <button id="randomBtn">Random query point</button>
+    </div>
+    <div class="stats">
+      <div class="stat">Prediction <b id="stPred">–</b></div>
+      <div class="stat">Votes A <b id="stA">–</b></div>
+      <div class="stat">Votes B <b id="stB">–</b></div>
+    </div>
+    <p class="note">KNN compares the query point to every stored training point, takes the k closest,
+      and the majority class wins. Try k = 1 on the border between the blobs (jagged, noise-sensitive)
+      vs a large k (smooth, but the minority class can be drowned out).</p>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---- deterministic pseudo-random generator (fixed seed) ----
+let seed = 2026091;
+function rand() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+function randn() {
+  let u = 0, v = 0;
+  while (u === 0) u = rand();
+  while (v === 0) v = rand();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+// ---- top-level pure functions ----
+function euclid(a, b) {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; s += d * d; }
+  return Math.sqrt(s);
+}
+
+// majority-vote prediction: classes are 0/1, ties broken toward the closest neighbor's class
+function knnPredict(trainX, trainY, q, k) {
+  const idx = trainX.map((p, i) => [euclid(p, q), trainY[i]]);
+  idx.sort((p, r) => p[0] - r[0]);
+  const top = idx.slice(0, Math.min(k, idx.length));
+  let c0 = 0, c1 = 0;
+  for (const t of top) { if (t[1] === 0) c0++; else c1++; }
+  if (c0 === c1) return top[0][1];            // tie -> nearest neighbor decides
+  return c1 > c0 ? 1 : 0;
+}
+
+function accuracyForK(k) {
+  let ok = 0;
+  for (let i = 0; i < testX.length; i++) {
+    if (knnPredict(trainX, trainY, testX[i], k) === testY[i]) ok++;
+  }
+  return ok / testY.length;
+}
+
+// ---- synthetic 2-D two-class dataset (two Gaussian blobs, seeded) ----
+const NB = 140;
+const dataX = [], dataY = [];
+for (let i = 0; i < NB; i++) {
+  const c = i < NB / 2 ? 0 : 1;
+  const cx = c === 0 ? -1.6 : 1.6, cy = c === 0 ? 0.7 : -0.7;
+  dataX.push([cx + randn() * 0.85, cy + randn() * 0.85]);
+  dataY.push(c);
+}
+
+// seeded 70/30 train/test split via Fisher-Yates with our own rand()
 const order = dataX.map((_, i) => i);
 for (let i = order.length - 1; i > 0; i--) {
   const j = Math.floor(rand() * (i + 1));
