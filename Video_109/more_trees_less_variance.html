@@ -57,7 +57,8 @@ const WORLDS = 40, N = 30, DEG = 5, X0 = 2.5, TSAMP = 12; // trees train on 12 o
 const TRUE = x => Math.sin(1.5 * x);
 const TRUTH = TRUE(X0);
 const MS = [1, 10, 100];
-let results = null; // results[m] = array of WORLDS forest predictions
+let results = null;
+let runToken = 0; // results[m] = array of WORLDS forest predictions
 
 // gaussian noise (Box-Muller)
 let spare = null;
@@ -166,11 +167,13 @@ function draw() {
 
 $("noise").oninput = e => { $("noiseVal").textContent = (+e.target.value).toFixed(2); };
 $("run").onclick = () => {
+  const myToken = ++runToken;
   $("run").disabled = true;
   const sig = +$("noise").value;
   results = { 1: [], 10: [], 100: [] };
   let w = 0;
   const step = () => {
+    if (myToken !== runToken || !results) return;
     // one "world": fresh noisy dataset from the true curve
     const data = [];
     for (let i = 0; i < N; i++) {
@@ -199,7 +202,9 @@ $("run").onclick = () => {
   step();
 };
 $("reset").onclick = () => {
+  runToken++;
   results = null;
+  $("run").disabled = false;
   $("v1").textContent = $("v10").textContent = $("v100").textContent = "—";
   $("ratio").textContent = "Ratios vs 1 tree: —";
   draw();
